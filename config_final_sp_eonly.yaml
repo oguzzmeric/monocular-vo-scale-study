@@ -1,0 +1,91 @@
+camera_rgb:
+  fx: 2680.51
+  fy: 2683.39
+  cx: 1908.48
+  cy: 1139.71
+  distortion_coefficients:
+    - 0.0798
+    - -0.1867
+    - 0.0
+    - 0.0
+    - 0.0
+  original_width: 3840
+  original_height: 2160
+target_resolution:
+  width: 3840
+  height: 2160
+features:
+  max_features: 3000
+  scale_factor: 1.2
+  n_levels: 8
+  ransac_threshold: 3.0
+  lowe_ratio: 0.70
+  spatial_distribution: false
+  spatial_distribution_oversample: 3
+  detector_type: superpoint
+  descriptor_norm: l2
+  device: auto
+  homography_score_ratio_threshold: 10.0   # 5 Ekim karari: yalniz E (H yolu kapali)
+  # 3 Ekim: LightGlue entegrasyonu testi -- config_superpoint_test.yaml
+  # (SuperPoint+klasik) ile AYNI, tek fark matcher_type. Boylece
+  # LightGlue'nun KENDI katkisi ayri bir degisken olarak olculebilir.
+  matcher_type: lightglue
+semantic:
+  min_confidence: 0.7
+  dynamic_classes:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 8
+    - 9
+  reference_objects:
+    2: 1.5
+    3: 4.5
+    4: 7.0
+    5: 12.0
+  dominant_bbox_edge: true
+  perspective_correction: true
+hybrid:
+  min_inlier_count: 40
+  deep_feature_interval: 20
+evaluation:
+  optical_flow_scale: true
+  ground_truth_file: data/ground-truth.csv
+  altitude_source: gt
+  gt_z_is_down: true
+  gt_z_offset: 41.6
+  warmup_start: 0
+  warmup_frames: 150
+  calculate_ate: true
+  ate_3d: true
+  force_2d: true
+  min_sim3_samples: 10
+  frame_step: 5
+persistent_ba:
+  window: 15
+  replenish_threshold: 50
+  replenish_exclude_radius: 15
+  min_track_len_in_window: 8
+  max_tracks_per_window: 150
+  parallax_cos_threshold: 0.999
+  pixel_noise_sigma: 1.5
+  anchor_sigma: 1.0e-6
+  klt_win_size: 63
+  klt_max_level: 6
+  klt_fb_threshold: 1.5
+  loop_keyframe_stride: 5
+  loop_min_keyframe_gap: 4
+  loop_min_inlier: 40
+  loop_consistency_angle_deg: 15.0
+  loop_max_points: 60
+  loop_odom_rot_sigma: 0.05
+  loop_odom_trans_sigma: 0.2
+  loop_rot_sigma: 0.02
+  loop_trans_sigma: 5.0
+  loop_landmark_back_k: 7
+logging:
+  level: INFO
+  log_to_file: false
+  log_file: logs/slam.log

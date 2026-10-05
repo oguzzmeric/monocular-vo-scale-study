@@ -94,9 +94,10 @@ class DataLoader:
         self.base_dir = self.config_path.parent
 
         # Kritik yolları config'den türet
-        self.frames_dir = self.base_dir / "data" / "raw_frames"
-        self.gt_path = self.base_dir / self.config["evaluation"]["ground_truth_file"]
-        self.detections_path = self.base_dir / "data" / "detections.json"
+        eval_cfg = self.config.get("evaluation", {})
+        self.frames_dir = self.base_dir / eval_cfg.get("raw_frames_dir", "data/raw_frames")
+        self.gt_path = self.base_dir / eval_cfg["ground_truth_file"]
+        self.detections_path = self.base_dir / eval_cfg.get("detections_file", "data/detections.json")
 
         # Yol validasyonları
         self._validate_path(self.frames_dir, "raw_frames klasörü")

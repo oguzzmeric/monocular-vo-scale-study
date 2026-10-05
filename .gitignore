@@ -64,3 +64,18 @@ desktop.ini
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# --- 5 Ekim: yarisma verisi, onbellek, GT iceren ciktilar (repoya girmez) ---
+data/
+data_2025_oturum_3/
+data_2025_oturum_4/
+data_2024/
+featcache*
+*.pkl
+*.npz
+*.bag
+*.zip
+*.pdf
+results/replay/
+okunanlar/
+scratchpad/
+experiments/sift_flann_baseline.py

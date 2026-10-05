@@ -21,10 +21,42 @@ from utils.data_loader import DataLoader
 
 logger = logging.getLogger(__name__)
 
+# 3 Ekim: LightGlue de SuperPoint gibi torch+lightglue gerektiriyor --
+# ayni guarded-import deseni (bkz. feature_extractor.py).
+try:
+    import torch
+    from lightglue import LightGlue as _LightGlueMatcher
+    _LIGHTGLUE_AVAILABLE = True
+except ImportError:
+    torch = None
+    _LightGlueMatcher = None
+    _LIGHTGLUE_AVAILABLE = False
+
 
 class MatcherError(Exception):
     """Matcher'a özgü hata sınıfı."""
     pass
+
+
+def validate_lightglue_conf(depth_confidence: float, width_confidence: float) -> None:
+    """
+    5 Ekim guvenlik kilidi: 2024 verisinde depth_confidence=0.99 ve width_confidence=-1
+    birlikte kullanildiginda pozlar felakete suruklendi (163-280 m, problemler.md 2.17).
+    Bu kombinasyon ve width_confidence<0 (genislik budamasi kapali) reddedilir.
+
+    Raises:
+        MatcherError: yasakli kombinasyon.
+    """
+    if width_confidence < 0:
+        raise MatcherError(
+            f"lg_width_confidence={width_confidence} (<0) yasak: genislik budamasi "
+            "kapali; 2024'te felakete yol acti."
+        )
+    if depth_confidence >= 0.99:
+        raise MatcherError(
+            f"lg_depth_confidence={depth_confidence} (>=0.99) yasak: erken cikis "
+            "neredeyse hic olmuyor; 2024'te felakete yol acti."
+        )
 
 
 @dataclass
@@ -93,13 +125,31 @@ class Matcher:
         logger.info("[Matcher] Başlatılıyor...")
 
         feat_cfg = data_loader.get_feature_config()
-        self._lowe_ratio = self._parse_lowe_ratio(feat_cfg)
-        self._bf_matcher = self._build_bf_matcher()
+        self._matcher_type = str(feat_cfg.get("matcher_type", "classical")).lower()
+        self._lightglue = None
+        self._lg_device = None
+        self._lowe_ratio = None
+        self._descriptor_norm = None
+        self._bf_matcher = None
 
-        logger.info(
-            "[Matcher] BF Matcher kuruldu — lowe_ratio=%.2f",
-            self._lowe_ratio,
-        )
+        if self._matcher_type == "classical":
+            self._lowe_ratio = self._parse_lowe_ratio(feat_cfg)
+            self._descriptor_norm = str(feat_cfg.get("descriptor_norm", "hamming")).lower()
+            self._bf_matcher = self._build_bf_matcher(self._descriptor_norm)
+            logger.info(
+                "[Matcher] BF Matcher kuruldu — lowe_ratio=%.2f, descriptor_norm=%s",
+                self._lowe_ratio, self._descriptor_norm,
+            )
+        elif self._matcher_type == "lightglue":
+            self._lightglue, self._lg_device = self._build_lightglue(feat_cfg)
+            logger.info(
+                "[Matcher] LightGlue kuruldu — device=%s", self._lg_device,
+            )
+        else:
+            raise MatcherError(
+                f"Bilinmeyen 'matcher_type': {self._matcher_type!r} "
+                f"(gecerli degerler: 'classical', 'lightglue')"
+            )
 
     # ------------------------------------------------------------------
     # Initialization helpers
@@ -132,17 +182,152 @@ class Matcher:
         return ratio
 
     @staticmethod
-    def _build_bf_matcher() -> cv2.BFMatcher:
+    def _build_bf_matcher(descriptor_norm: str) -> cv2.BFMatcher:
         """
-        ORB descriptor'ları için BF Matcher oluşturur.
+        Config'deki descriptor_norm'a gore BF Matcher olusturur.
 
-        ORB binary descriptor kullanır → Hamming Distance metriği.
+        ORB ikili descriptor -> Hamming Distance (varsayilan).
+        SuperPoint ondalikli (float) descriptor -> L2 mesafe (kosinus
+        benzerligiyle orantili, cunku SuperPoint tanimlayicilari zaten
+        L2-normalize edilmis durumda).
         crossCheck=False → kNN (k=2) ile Lowe's Ratio Test uygulanabilir.
+
+        Args:
+            descriptor_norm: "hamming" ya da "l2".
 
         Returns:
             cv2.BFMatcher instance'ı.
+
+        Raises:
+            MatcherError: Bilinmeyen norm degeri verilirse.
         """
-        return cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        norm_map = {"hamming": cv2.NORM_HAMMING, "l2": cv2.NORM_L2}
+        if descriptor_norm not in norm_map:
+            raise MatcherError(
+                f"Bilinmeyen descriptor_norm: {descriptor_norm!r} "
+                f"(gecerli degerler: 'hamming', 'l2')"
+            )
+        return cv2.BFMatcher(norm_map[descriptor_norm], crossCheck=False)
+
+    def _build_lightglue(self, feat_cfg: dict) -> Tuple["torch.nn.Module", str]:
+        """
+        3 Ekim: LightGlue eslestirici olusturur (lightglue paketi).
+        Agirliklar SuperPoint gibi torch.hub ile otomatik indirilir.
+
+        Args:
+            feat_cfg: config.yaml features blogu.
+
+        Returns:
+            (lightglue_model, device_str) tuple'i.
+
+        Raises:
+            MatcherError: torch/lightglue kurulu degilse.
+        """
+        if not _LIGHTGLUE_AVAILABLE:
+            raise MatcherError(
+                "matcher_type='lightglue' secildi ama 'torch'/'lightglue' "
+                "kurulu degil."
+            )
+
+        device_cfg = str(feat_cfg.get("device", "auto")).lower()
+        if device_cfg == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            device = device_cfg
+
+        # 3 Ekim: dogruluga etki eden 3 ic parametre config'ten okunabilir
+        # (varsayilanlari LightGlue'nun kendi varsayilanlariyla ayni --
+        # hicbir sey belirtilmezse davranis degismez).
+        lg_conf = {
+            "filter_threshold": float(feat_cfg.get("lg_filter_threshold", 0.1)),
+            "depth_confidence": float(feat_cfg.get("lg_depth_confidence", 0.95)),
+            "width_confidence": float(feat_cfg.get("lg_width_confidence", 0.99)),
+        }
+
+        validate_lightglue_conf(lg_conf["depth_confidence"], lg_conf["width_confidence"])
+
+        try:
+            model = _LightGlueMatcher(features="superpoint", **lg_conf).eval().to(device)
+        except Exception as e:
+            raise MatcherError(f"LightGlue olusturulamadi: {e}") from e
+
+        return model, device
+
+    def _match_lightglue(
+        self,
+        features_prev: FrameFeatures,
+        features_curr: FrameFeatures,
+    ) -> "MatchResult":
+        """
+        LightGlue ile esleme yapar. Girdi olarak keypoints+descriptors+
+        image_size gerekiyor -- bunlari MEVCUT FrameFeatures alanlarindan
+        (keypoints, descriptors, clean_frame.shape) yeniden kuruyoruz,
+        FrameFeatures'a YENI bir alan EKLEMEDEN (arayuz degismiyor).
+        """
+        if not features_prev.has_descriptors:
+            raise MatcherError(
+                f"Önceki frame'de descriptor yok: {features_prev.frame_name}"
+            )
+        if not features_curr.has_descriptors:
+            raise MatcherError(
+                f"Mevcut frame'de descriptor yok: {features_curr.frame_name}"
+            )
+
+        h0, w0 = features_prev.clean_frame.shape[:2]
+        h1, w1 = features_curr.clean_frame.shape[:2]
+
+        kp0 = torch.tensor(
+            [kp.pt for kp in features_prev.keypoints], dtype=torch.float32, device=self._lg_device
+        )[None]
+        kp1 = torch.tensor(
+            [kp.pt for kp in features_curr.keypoints], dtype=torch.float32, device=self._lg_device
+        )[None]
+        desc0 = torch.from_numpy(features_prev.descriptors).to(self._lg_device)[None]
+        desc1 = torch.from_numpy(features_curr.descriptors).to(self._lg_device)[None]
+        size0 = torch.tensor([[w0, h0]], dtype=torch.float32, device=self._lg_device)
+        size1 = torch.tensor([[w1, h1]], dtype=torch.float32, device=self._lg_device)
+
+        with torch.no_grad():
+            out = self._lightglue({
+                "image0": {"keypoints": kp0, "descriptors": desc0, "image_size": size0},
+                "image1": {"keypoints": kp1, "descriptors": desc1, "image_size": size1},
+            })
+
+        matches = out["matches"][0].cpu().numpy()
+        scores = out["scores"][0].cpu().numpy()
+
+        if len(matches) == 0:
+            pts_prev = np.empty((0, 2), dtype=np.float32)
+            pts_curr = np.empty((0, 2), dtype=np.float32)
+            dmatches: List[cv2.DMatch] = []
+        else:
+            pts_prev = np.float32([features_prev.keypoints[i].pt for i in matches[:, 0]])
+            pts_curr = np.float32([features_curr.keypoints[j].pt for j in matches[:, 1]])
+            dmatches = [
+                cv2.DMatch(int(i), int(j), float(1.0 - s))
+                for (i, j), s in zip(matches, scores)
+            ]
+
+        logger.debug(
+            "[Matcher] %s → %s: LightGlue %d eşleşme buldu.",
+            features_prev.frame_name, features_curr.frame_name, len(dmatches),
+        )
+
+        result = MatchResult(
+            frame_name_prev=features_prev.frame_name,
+            frame_name_curr=features_curr.frame_name,
+            pts_prev=pts_prev,
+            pts_curr=pts_curr,
+            matches=dmatches,
+        )
+
+        if not result.has_enough_matches:
+            logger.warning(
+                "[Matcher] Yetersiz eşleşme: %d (minimum 8 gerekli).",
+                result.match_count,
+            )
+
+        return result
 
     # ------------------------------------------------------------------
     # Lowe's Ratio Test
@@ -242,6 +427,9 @@ class Matcher:
         Raises:
             MatcherError: Descriptor yoksa veya matching başarısız olursa.
         """
+        if self._matcher_type == "lightglue":
+            return self._match_lightglue(features_prev, features_curr)
+
         # Descriptor validasyonu
         if not features_prev.has_descriptors:
             raise MatcherError(
@@ -306,7 +494,9 @@ class Matcher:
             ) from e
 
     def __repr__(self) -> str:
-        return f"Matcher(lowe_ratio={self._lowe_ratio:.2f})"
+        if self._matcher_type == "lightglue":
+            return f"Matcher(type=lightglue, device={self._lg_device})"
+        return f"Matcher(type=classical, lowe_ratio={self._lowe_ratio:.2f})"
 
 
 # ------------------------------------------------------------------
