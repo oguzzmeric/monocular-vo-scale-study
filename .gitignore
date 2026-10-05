@@ -79,3 +79,7 @@ results/replay/
 okunanlar/
 scratchpad/
 experiments/sift_flann_baseline.py
+
+# Yayin gorselleri (results/figures) repoya girer
+!results/figures/
+!results/figures/*.png
