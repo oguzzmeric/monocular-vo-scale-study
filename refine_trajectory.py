@@ -15,10 +15,14 @@ Kullanim (WSL):
 """
 
 import logging
+import sys
+from pathlib import Path
 
 import numpy as np
 
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.getLogger("core.matcher").setLevel(logging.WARNING)
+logging.getLogger("core.motion_estimator").setLevel(logging.WARNING)
 
 from utils.data_loader import DataLoader
 from utils.camera_calibration import CameraCalibration
@@ -28,7 +32,10 @@ from core.motion_estimator import MotionEstimator
 from core.scale_recovery import ScaleRecovery
 from core.pose_graph import PoseGraph
 
-loader = DataLoader("config.yaml")
+config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+print(f"config: {config_path}")
+
+loader = DataLoader(config_path)
 cam = CameraCalibration(loader)
 extractor = FeatureExtractor(loader, cam)
 matcher = Matcher(loader)
@@ -49,10 +56,22 @@ for idx, name, frame in loader.frame_generator():
 print(f"uretim pipeline tamamlandi: {len(pose_graph.trajectory)} kare islendi")
 
 refined = pose_graph.refine_with_persistent_map(cam, extractor)
+print(f"persistent-map BA tamamlandi.")
 
-pose_graph.save_trajectory("data/trajectory_output.csv")
-pose_graph.save_trajectory("data/trajectory_output_persistent_ba.csv", trajectory=refined)
-print("Kaydedildi: data/trajectory_output.csv, data/trajectory_output_persistent_ba.csv")
+refined_lc = pose_graph.refine_with_loop_closure(cam, extractor, matcher, estimator)
+print(f"loop closure + PGO tamamlandi.")
+
+tag = Path(config_path).stem  # ör. "config" -> "config", "config_2024" -> "config_2024"
+prod_path = f"data/trajectory_output_{tag}.csv"
+ba_path = f"data/trajectory_output_persistent_ba_{tag}.csv"
+lc_path = f"data/trajectory_output_loop_closure_{tag}.csv"
+pose_graph.save_trajectory(prod_path)
+pose_graph.save_trajectory(ba_path, trajectory=refined)
+pose_graph.save_trajectory(lc_path, trajectory=refined_lc)
+print(f"Kaydedildi: {prod_path}, {ba_path}, {lc_path}")
+
+
+force_2d = bool(loader.config.get("evaluation", {}).get("force_2d", False))
 
 
 def mean_error(points):
@@ -63,17 +82,29 @@ def mean_error(points):
         gt = loader.get_ground_truth(p.frame_name)
         if gt is None:
             continue
-        errs.append(np.linalg.norm(p.position - gt.as_vector()))
+        est_pos = p.position.copy()
+        gt_pos = gt.as_vector()
+        if force_2d:
+            # GT'de Z yoksa (hep 0), BA'nin serbestce urettigi Z tahminini
+            # de kiyaslamadan cikar -- yoksa var olmayan bir Z farkindan
+            # metrik sisiyor (bkz. main.py'deki ayni sorun, force_2d fix'i)
+            est_pos = est_pos.copy()
+            est_pos[2] = 0.0
+            gt_pos = gt_pos.copy()
+            gt_pos[2] = 0.0
+        errs.append(np.linalg.norm(est_pos - gt_pos))
     return (float(np.mean(errs)) if errs else float("nan")), len(errs)
 
 
 prod_err, n1 = mean_error(pose_graph.trajectory)
 ref_err, n2 = mean_error(refined)
+lc_err, n3 = mean_error(refined_lc)
 
 print()
 print("=" * 60)
-print("  HIZALANMAMIS mean (yarisma metrigi) -- ikisi de PoseGraph'in")
+print("  HIZALANMAMIS mean (yarisma metrigi) -- ucu de PoseGraph'in")
 print("  KENDI Sim(3) raporlama mekanizmasiyla hesaplandi")
 print("=" * 60)
 print(f"  URETIM (duzeltmesiz)           n={n1:4d}  : {prod_err:.2f} m")
 print(f"  PERSISTENT-MAP BA              n={n2:4d}  : {ref_err:.2f} m")
+print(f"  BA + LOOP CLOSURE              n={n3:4d}  : {lc_err:.2f} m")

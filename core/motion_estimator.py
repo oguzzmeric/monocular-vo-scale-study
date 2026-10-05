@@ -85,7 +85,6 @@ class MotionEstimator:
         6. inlier_count < min_inlier_count -> deep features warning
     """
 
-    _HOMOGRAPHY_SCORE_RATIO_THRESHOLD = 0.45
     _H_RANSAC_CONFIDENCE = 0.999
     _E_RANSAC_CONFIDENCE = 0.999
     _H_RANSAC_MAX_ITER = 2000
@@ -111,11 +110,21 @@ class MotionEstimator:
 
         self._ransac_threshold = self._parse_ransac_threshold(feat_cfg)
         self._min_inlier_count = self._parse_min_inlier_count(hybrid_cfg)
+        # 3 Ekim: sabit sinif sabiti (0.45) config'e tasindi -- SuperPoint
+        # taramasi (problemler.md SS2.14) bu esigin detector_type'a VE
+        # ucusa gore COK farkli optimum degerler istedigini gosterdi
+        # (2024: 0.20, 2026/oturum_3: >=0.30). Varsayilan 0.45, eski
+        # (ORB) davranisi degistirmiyor.
+        self._HOMOGRAPHY_SCORE_RATIO_THRESHOLD = float(
+            feat_cfg.get("homography_score_ratio_threshold", 0.45)
+        )
 
         logger.info(
-            "[MotionEstimator] Ready -- ransac_threshold=%.1f, min_inlier_count=%d",
+            "[MotionEstimator] Ready -- ransac_threshold=%.1f, min_inlier_count=%d, "
+            "homography_score_ratio_threshold=%.2f",
             self._ransac_threshold,
             self._min_inlier_count,
+            self._HOMOGRAPHY_SCORE_RATIO_THRESHOLD,
         )
 
     @staticmethod
@@ -435,25 +444,122 @@ class MotionEstimator:
         e_mask: np.ndarray,
         e_inlier_mask: np.ndarray,
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], np.ndarray]:
+        """
+        Decomposes Essential matrix into R and t.
+
+        cv2.recoverPose disambiguates its 4 candidates with only an
+        internal cheirality check -- no reprojection-error gate, unlike
+        _decompose_homography's voting (see its docstring for why that
+        matters). In near-degenerate scenes recoverPose would declare
+        "no candidate supported" (retval=0) and reject the pose outright,
+        even where H's richer voting could resolve the same frame.
+
+        Reusing H's exact cheirality + reprojection-error vote here (29
+        Eylul, measured on 2026 AND oturum_3, otonom-sadece metrik):
+        hata -%12.3 / -%13.2, AYNI ZAMANDA daha az kare reddediliyor
+        (444->448/449, 441->446/449) -- iki ucusta da ayni yonde iyilesen,
+        bugunun en buyuk tek-adimlik kazanci (force_2d haric).
+        """
         try:
-            retval, R, t, _ = cv2.recoverPose(
-                E, pts_prev, pts_curr,
-                cameraMatrix=self._K,
-                mask=e_mask,
-            )
-            if retval <= 0:
-                logger.debug(
-                    "[MotionEstimator] recoverPose: no candidate supported "
-                    "by cheirality (retval=%d).", retval,
-                )
-                return None, None, e_inlier_mask
-            t_norm = np.linalg.norm(t)
-            if t_norm > 1e-9:
-                t = t / t_norm
-            return R, t, e_inlier_mask
+            R1, R2, t = cv2.decomposeEssentialMat(E)
         except cv2.error as e:
-            logger.warning("[MotionEstimator] recoverPose failed: %s", e)
+            logger.warning("[MotionEstimator] decomposeEssentialMat failed: %s", e)
             return None, None, e_inlier_mask
+
+        t = t.reshape(3, 1)
+        t_norm = np.linalg.norm(t)
+        if t_norm > 1e-9:
+            t = t / t_norm
+        candidates = [(R1, t), (R1, -t), (R2, t), (R2, -t)]
+
+        inlier_idx = np.where(e_inlier_mask == 1)[0]
+        if len(inlier_idx) == 0:
+            logger.debug("[MotionEstimator] E decomposition: no inlier points.")
+            return None, None, e_inlier_mask
+
+        pts_prev_in = pts_prev[inlier_idx]
+        pts_curr_in = pts_curr[inlier_idx]
+        test_count = min(self._CHEIRALITY_SAMPLE, len(pts_prev_in))
+        pts_prev_test = pts_prev_in[:test_count]
+        pts_curr_test = pts_curr_in[:test_count]
+
+        K_inv = self._cam.K_inv
+        fx, fy = self._cam.fx, self._cam.fy
+        cx, cy = self._cam.cx, self._cam.cy
+        P1 = np.hstack([np.eye(3), np.zeros((3, 1))])
+        O1 = np.zeros(3)
+        reproj_th_sq = self._REPROJ_THRESHOLD ** 2
+
+        best_R = None
+        best_t = None
+        best_votes = -1
+
+        for R_cand, t_cand in candidates:
+            P2 = np.hstack([R_cand, t_cand])
+            O2 = (-R_cand.T @ t_cand).flatten()
+
+            votes = 0
+            for j in range(test_count):
+                u1, v1 = pts_prev_test[j]
+                u2, v2 = pts_curr_test[j]
+
+                p1 = K_inv @ np.array([u1, v1, 1.0])
+                p2 = K_inv @ np.array([u2, v2, 1.0])
+                A = np.array([
+                    p1[0] * P1[2] - P1[0],
+                    p1[1] * P1[2] - P1[1],
+                    p2[0] * P2[2] - P2[0],
+                    p2[1] * P2[2] - P2[1],
+                ])
+                _, _, Vt = np.linalg.svd(A)
+                X_h = Vt[-1]
+                if abs(X_h[3]) < 1e-9:
+                    continue
+                X = X_h[:3] / X_h[3]
+                if not np.all(np.isfinite(X)):
+                    continue
+
+                ray1 = X - O1
+                ray2 = X - O2
+                d1 = np.linalg.norm(ray1)
+                d2 = np.linalg.norm(ray2)
+                if d1 < 1e-9 or d2 < 1e-9:
+                    continue
+
+                # gate 1: cheirality
+                Z1 = X[2]
+                X_cam2 = R_cand @ X + t_cand.flatten()
+                Z2 = X_cam2[2]
+                if Z1 <= 0 or Z2 <= 0:
+                    continue
+
+                # gate 2: reprojection error
+                u1_hat = fx * X[0] / Z1 + cx
+                v1_hat = fy * X[1] / Z1 + cy
+                err1 = (u1_hat - u1) ** 2 + (v1_hat - v1) ** 2
+                if err1 > reproj_th_sq:
+                    continue
+
+                u2_hat = fx * X_cam2[0] / Z2 + cx
+                v2_hat = fy * X_cam2[1] / Z2 + cy
+                err2 = (u2_hat - u2) ** 2 + (v2_hat - v2) ** 2
+                if err2 > reproj_th_sq:
+                    continue
+
+                votes += 1
+
+            if votes > best_votes:
+                best_votes = votes
+                best_R, best_t = R_cand, t_cand
+
+        if best_R is None or best_votes <= 0:
+            logger.debug(
+                "[MotionEstimator] E decomposition: cheirality vote "
+                "inconclusive (best=%d of %d samples).", best_votes, test_count,
+            )
+            return None, None, e_inlier_mask
+
+        return best_R, best_t, e_inlier_mask
 
     # ------------------------------------------------------------------
     # Public API
@@ -529,9 +635,14 @@ class MotionEstimator:
             R, t, selected_mask = None, None, h_inlier_mask
 
             if R_H_ratio > self._HOMOGRAPHY_SCORE_RATIO_THRESHOLD:
-                R, t = self._decompose_homography(
-                    H, pts_prev, pts_curr, h_inlier_mask
-                )
+                # 5 Ekim: SVD yakinsamama (2024, ransac_threshold=1.0) pozu cokertmesin
+                try:
+                    R, t = self._decompose_homography(
+                        H, pts_prev, pts_curr, h_inlier_mask
+                    )
+                except np.linalg.LinAlgError as e:
+                    logger.warning("[MotionEstimator] H ayristirma SVD hatasi: %s", e)
+                    R, t = None, None
                 selected_mask = h_inlier_mask
                 pose.matrix_type = MatrixType.HOMOGRAPHY
 

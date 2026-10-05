@@ -1,13 +1,14 @@
 import os
+import sys
 import json
 from pathlib import Path
 from ultralytics import YOLO
 
 BASE_DİR = Path(__file__).resolve().parent
 
-FRAMES_DİR = BASE_DİR / "data" / "raw_frames"
+FRAMES_DİR = Path(sys.argv[1]) if len(sys.argv) > 1 else BASE_DİR / "data" / "raw_frames"
 WEİGHT_PATH = BASE_DİR / "weights" / "best.pt"
-OUTPUT_JSON = BASE_DİR / "data" / "detections.json"
+OUTPUT_JSON = Path(sys.argv[2]) if len(sys.argv) > 2 else BASE_DİR / "data" / "detections.json"
 
 def process_frames():
     print(f"yolo modeli işleniyor {WEİGHT_PATH}")

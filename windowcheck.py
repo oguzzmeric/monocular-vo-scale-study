@@ -119,6 +119,13 @@ def report(label, est):
     err_al = np.linalg.norm(gt_arr - est_al, axis=1)
     err_raw = np.linalg.norm(gt_arr - est, axis=1)
 
+    # 28/29 Eylul dersi: isinma karelerinde pozisyon = GT (bedava sifir
+    # hata), tum-ucus ortalamasi bunu iceriyor. Otonom-sadece (frame>=750)
+    # AYRI raporla -- gercek karsilastirma bu.
+    auto_mask = np.array([int(n.split("_")[1]) >= 750 for n in names])
+    if auto_mask.any():
+        print(f"  OTONOM-SADECE mean (n={auto_mask.sum():3d})        : {err_raw[auto_mask].mean():7.2f} m")
+
     d_est = np.diff(est_al, axis=0)
     d_gt = np.diff(gt_arr, axis=0)
     se = np.linalg.norm(d_est, axis=1); sg = np.linalg.norm(d_gt, axis=1)

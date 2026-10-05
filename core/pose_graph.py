@@ -270,6 +270,255 @@ def _solve_window_gtsam(K: np.ndarray, f_focal: float, R_init: list, t_init: lis
     return R_out, t_out
 
 
+def _detect_loop_closures(loader: DataLoader, feature_extractor, matcher, motion_estimator,
+                           frame_paths: list, cfg: dict) -> list:
+    """GT KULLANMADAN, sadece gorsel kanitla loop closure adayi arar.
+
+    Ucusu seyrek "anahtar kare"lere boler (loop_keyframe_stride), zamanda
+    birbirinden uzak (loop_min_keyframe_gap) her anahtar-kare ciftini,
+    ayni ardisik-kare esleme mantigiyla (Matcher + MotionEstimator, H/E
+    RANSAC) dener. Yeterli inlier (loop_min_inlier) bulunursa "bu ikisi
+    ayni yeri goruyor" kabul edilir.
+
+    Onceden loopcheck.py'de core'a dokunmadan test edildi (25/28 Eylul):
+    2026 ucusunda GT'nin bagimsiz olarak isaret ettigi bolgeyi (frame
+    375-1000 civari) hic GT'ye bakmadan buldu -- yontem dogrulandi.
+
+    28 Eylul GECIKMIS DUZELTME: ilk entegrasyonda tek bir guclu eslesme
+    yeterli sayiliyordu -- bu, loop_min_inlier 40'tan 150'ye kadar
+    denenen her esikte duz BA'yi (45.48m) gecemedi (50-65m arasi kaldi),
+    sonuc esige gore monoton bile degildi -- sahte-pozitif ihtimali
+    guclu. ORB-SLAM2 makalesi (Mur-Artal & Tardos 2017) okunup bulundu:
+    gercek sistemler bir loop adayini TEK ESLESMEYLE degil, ARDISIK
+    ANAHTAR KARELERDE TUTARLI sekilde tekrar tespit edilince kabul eder
+    (DBoW2'nin "temporal consistency" kontrolu). Simdi ayni sey burada:
+    aday (i,j) kabul edilmeden once KOMSU anahtar-kare cifti ((a+1,b+1))
+    de BAGIMSIZ olarak gecerli bir eslesme vermeli VE donme birbirine
+    yakin olmali (aksi halde tek karelik bir tesaduf/tekrarlayan doku
+    olabilir, atilir).
+
+    Returns:
+        List[dict]: her biri {"i", "j", "R", "inlier_count", "pts_i", "pts_j"}
+        -- i/j frame_paths uzerindeki (adim) indeksleri, R i'nin kendi
+        kamera cercevesinden j'ninkine goreli donme, pts_i/pts_j ise
+        inlier eslesen piksel koordinatlari (undistorted).
+    """
+    stride = int(cfg.get("loop_keyframe_stride", 5))
+    min_gap = int(cfg.get("loop_min_keyframe_gap", 4))
+    min_inlier = int(cfg.get("loop_min_inlier", 40))
+    consistency_angle_deg = float(cfg.get("loop_consistency_angle_deg", 15.0))
+    max_points_per_loop = int(cfg.get("loop_max_points", 60))
+
+    keyframe_idx = list(range(0, len(frame_paths), stride))
+    features = {}
+    for ki in keyframe_idx:
+        frame = loader.load_frame(frame_paths[ki])
+        features[ki] = feature_extractor.extract(frame, frame_paths[ki].name)
+
+    def try_match(a: int, b: int):
+        """(a,b) -- keyframe_idx UZERINDEKI indeksler. Basarili olursa
+        (pose, mr) doner, olmazsa None."""
+        if a < 0 or b < 0 or a >= len(keyframe_idx) or b >= len(keyframe_idx):
+            return None
+        i, j = keyframe_idx[a], keyframe_idx[b]
+        feats_i, feats_j = features[i], features[j]
+        if not feats_i.has_descriptors or not feats_j.has_descriptors:
+            return None
+        mr = matcher.match(feats_i, feats_j)
+        if not mr.has_enough_matches:
+            return None
+        pose = motion_estimator.estimate(mr)
+        if not (pose.is_valid and pose.inlier_count >= min_inlier):
+            return None
+        return pose, mr
+
+    def rotation_angle_deg(R1: np.ndarray, R2: np.ndarray) -> float:
+        Rd = R1.T @ R2
+        cos_angle = np.clip((np.trace(Rd) - 1.0) / 2.0, -1.0, 1.0)
+        return float(np.degrees(np.arccos(cos_angle)))
+
+    rng = np.random.default_rng(0)
+    loops = []
+    for a in range(len(keyframe_idx)):
+        for b in range(a + min_gap, len(keyframe_idx)):
+            result = try_match(a, b)
+            if result is None:
+                continue
+            pose, mr = result
+            # komsu dogrulama: (a+1, b+1) BAGIMSIZ olarak da gecerli mi
+            # ve donme birbirine yakin mi (tek karelik tesaduf/tekrarlayan
+            # doku degil, GERCEKTEN ayni yerin surekli goruntusu)
+            neighbor = try_match(a + 1, b + 1)
+            if neighbor is None:
+                continue
+            neighbor_pose, _ = neighbor
+            angle_diff = rotation_angle_deg(pose.R, neighbor_pose.R)
+            if angle_diff > consistency_angle_deg:
+                continue
+            i, j = keyframe_idx[a], keyframe_idx[b]
+            mask = pose.inlier_mask.astype(bool) if pose.inlier_mask is not None else None
+            pts_i = mr.pts_prev[mask] if mask is not None else mr.pts_prev
+            pts_j = mr.pts_curr[mask] if mask is not None else mr.pts_curr
+            if len(pts_i) > max_points_per_loop:
+                idx = rng.choice(len(pts_i), max_points_per_loop, replace=False)
+                pts_i, pts_j = pts_i[idx], pts_j[idx]
+            loops.append({"i": i, "j": j, "R": pose.R, "inlier_count": pose.inlier_count,
+                           "pts_i": pts_i, "pts_j": pts_j})
+    return loops
+
+
+def _track_points_backward(loader: DataLoader, cam, frame_paths: list, i: int,
+                            pts_i: np.ndarray, back_k: int, cfg: dict):
+    """pts_i (frame i'de, N nokta) icin geriye, i-1,i-2,...,i-back_k
+    zincirini KLT ile takip eder (persistent-map'teki AYNI ileri-geri
+    tutarlilik kontroluyle). Amac: (i,j) loop ciftinin kendisi -- TANIM
+    GEREGI ayni fiziksel yer -- dusuk taban cizgisi verir (triangulasyon
+    guvenilmez). i-back_k ise i'nin KENDI ucus gecmisinde GERCEK bir
+    taban cizgisiyle ayrilmis -- pencereli BA'nin zaten guvendigi turden
+    bir mesafe.
+
+    Returns:
+        (k_idx, ok_mask (N,) bool, pts_at_k (N,2)) -- basarisiz olan
+        noktalar icin pts_at_k degeri kullanilmamali (ok_mask'e bak).
+    """
+    klt_win = (int(cfg["klt_win_size"]), int(cfg["klt_win_size"]))
+    klt_max_level = int(cfg["klt_max_level"])
+    klt_fb_threshold = float(cfg["klt_fb_threshold"])
+    lk_params = dict(winSize=klt_win, maxLevel=klt_max_level,
+                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+
+    def load_gray(idx):
+        frame = loader.load_frame(frame_paths[idx])
+        clean = cam.undistort(frame)
+        return cv2.cvtColor(clean, cv2.COLOR_BGR2GRAY)
+
+    k_idx = max(0, i - back_k)
+    n = len(pts_i)
+    if k_idx == i or n == 0:
+        return k_idx, np.zeros(n, dtype=bool), np.zeros((n, 2), dtype=np.float32)
+
+    gray_curr = load_gray(i)
+    pts_curr = np.asarray(pts_i, dtype=np.float32).reshape(-1, 1, 2)
+    ok = np.ones(n, dtype=bool)
+
+    for idx in range(i - 1, k_idx - 1, -1):
+        gray_prev = load_gray(idx)
+        pts_next, st_fwd, _ = cv2.calcOpticalFlowPyrLK(gray_curr, gray_prev, pts_curr, None, **lk_params)
+        pts_back, st_bwd, _ = cv2.calcOpticalFlowPyrLK(gray_prev, gray_curr, pts_next, None, **lk_params)
+        fb_err = np.linalg.norm((pts_curr - pts_back).reshape(-1, 2), axis=1)
+        step_ok = (st_fwd.flatten() == 1) & (st_bwd.flatten() == 1) & (fb_err < klt_fb_threshold)
+        ok = ok & step_ok
+        pts_curr = pts_next
+        gray_curr = gray_prev
+
+    return k_idx, ok, pts_curr.reshape(-1, 2)
+
+
+def _apply_loop_closure_pgo(K: np.ndarray, R_local_corr: list, t_local_corr: list,
+                             loops: list, cfg: dict, loader: DataLoader, cam):
+    """Ikinci asama: pencereli BA'nin ("backbone") ciktisini tek bir
+    kuresel GTSAM pose-graph'ina koyar. Ardisik adimlar arasi kisit
+    (BetweenFactorPose3) backbone'un zaten hesapladigi goreli pozu
+    aynen tasir -- odometri.
+
+    Loop kisitlari -- UCUNCU DENEME (28 Eylul): ilk iki deneme basarisiz
+    oldu. (1) (i,j) ciftinden dogrudan landmark triangule etmek: dusuk
+    taban cizgisi (loop TANIM GEREGI ayni fiziksel yer) yuzunden hep
+    basarisiz oldu. (2) E-matrisinden cikan goreli DONMEyi dogrudan
+    BetweenFactorPose3 olarak eklemek: esik/komsu-dogrulama ne kadar
+    sikilastirilirsa sikilastirilsin duz BA'yi (45.48m) hic gecemedi
+    (50-65m arasi kaldi). ORB-SLAM2 makalesi ISIGINDA simdi: loop
+    noktasini (i'deki), i'NIN KENDI UCUS GECMISINDE (i-back_k'ya kadar)
+    GERCEK bir taban cizgisiyle KLT ile geriye izliyoruz (bkz.
+    _track_points_backward). Basarili izlenen her nokta icin UC gorunumlu
+    (i-back_k, i, j) triangulasyon yapiyoruz -- i-back_k ile i arasi
+    GERCEK, dogrulanmis (KLT basarili) bir taban cizgisi var, bu da
+    (i-back_k, j) ve (i, j) ciftlerini de guvenilir kiliyor. Landmark
+    UC gorunume de GenericProjectionFactorCal3_S2 ile baglanir -- artik
+    dogrudan (ve scale-belirsiz) bir goreli-poz kisiti degil, ORB-SLAM'in
+    "paylasilan harita noktasi" mantiginin kucuk bir versiyonu.
+
+    Returns:
+        (R_local_new, t_local_new) -- duzeltilmis yerel adim listeleri,
+        _finalize_refined_trajectory'ye ayni sekilde verilebilir.
+    """
+    import gtsam
+    from gtsam import Pose3, Rot3, Point3, Cal3_S2
+    from gtsam.symbol_shorthand import X, L
+
+    N = len(R_local_corr)
+    R_world = [np.eye(3)]
+    t_world = [np.zeros(3)]
+    for i in range(N):
+        t_world.append(t_world[-1] + R_world[-1] @ t_local_corr[i])
+        R_world.append(R_world[-1] @ R_local_corr[i])
+
+    frame_paths = loader.frame_list
+
+    graph = gtsam.NonlinearFactorGraph()
+    initial = gtsam.Values()
+    gtsam_K = Cal3_S2(K[0, 0], K[1, 1], 0.0, K[0, 2], K[1, 2])
+    pixel_noise = gtsam.noiseModel.Isotropic.Sigma(2, float(cfg["pixel_noise_sigma"]))
+
+    for i in range(N + 1):
+        initial.insert(X(i), Pose3(Rot3(R_world[i]), Point3(t_world[i])))
+
+    graph.add(gtsam.PriorFactorPose3(
+        X(0), Pose3(Rot3(R_world[0]), Point3(t_world[0])),
+        gtsam.noiseModel.Isotropic.Sigma(6, 1e-6)))
+
+    odom_rot_sigma = float(cfg.get("loop_odom_rot_sigma", 0.01))
+    odom_trans_sigma = float(cfg.get("loop_odom_trans_sigma", 0.05))
+    odom_sigma = gtsam.noiseModel.Diagonal.Sigmas(
+        np.array([odom_rot_sigma] * 3 + [odom_trans_sigma] * 3))
+    for i in range(N):
+        rel = Pose3(Rot3(R_local_corr[i]), Point3(t_local_corr[i]))
+        graph.add(gtsam.BetweenFactorPose3(X(i), X(i + 1), rel, odom_sigma))
+
+    back_k = int(cfg.get("loop_landmark_back_k", 7))
+    n_landmarks = 0
+    for loop in loops:
+        i, j = loop["i"], loop["j"]
+        pts_i, pts_j = loop["pts_i"], loop["pts_j"]
+        k_idx, ok, pts_k = _track_points_backward(loader, cam, frame_paths, i, pts_i, back_k, cfg)
+        if not ok.any():
+            continue
+        Pk = _projection_matrix(K, R_world[k_idx], t_world[k_idx])
+        Pi = _projection_matrix(K, R_world[i], t_world[i])
+        Pj = _projection_matrix(K, R_world[j], t_world[j])
+        for idx in np.nonzero(ok)[0]:
+            Xw = _triangulate_multiview([Pk, Pi, Pj], [pts_k[idx], pts_i[idx], pts_j[idx]])
+            if Xw is None:
+                continue
+            initial.insert(L(n_landmarks), Point3(Xw))
+            graph.add(gtsam.GenericProjectionFactorCal3_S2(
+                pts_k[idx].astype(np.float64), pixel_noise, X(k_idx), L(n_landmarks), gtsam_K))
+            graph.add(gtsam.GenericProjectionFactorCal3_S2(
+                pts_i[idx].astype(np.float64), pixel_noise, X(i), L(n_landmarks), gtsam_K))
+            graph.add(gtsam.GenericProjectionFactorCal3_S2(
+                pts_j[idx].astype(np.float64), pixel_noise, X(j), L(n_landmarks), gtsam_K))
+            n_landmarks += 1
+
+    if n_landmarks == 0:
+        return R_local_corr, t_local_corr
+
+    logger.info("[PoseGraph] refine_with_loop_closure: %d loop landmark eklendi", n_landmarks)
+
+    params = gtsam.LevenbergMarquardtParams()
+    params.setMaxIterations(100)
+    result = gtsam.LevenbergMarquardtOptimizer(graph, initial, params).optimize()
+
+    R_out, t_out = [], []
+    for i in range(N + 1):
+        p = result.atPose3(X(i))
+        R_out.append(p.rotation().matrix())
+        t_out.append(p.translation())
+
+    R_local_new = [R_out[i].T @ R_out[i + 1] for i in range(N)]
+    t_local_new = [R_out[i].T @ (t_out[i + 1] - t_out[i]) for i in range(N)]
+    return R_local_new, t_local_new
+
+
 @dataclass
 class TrajectoryPoint:
     frame_name: str
@@ -550,8 +799,84 @@ class PoseGraph:
             R0, t0 = R_out[-1], t_out[-1]
             start = end
 
-        # yeniden zincirle, warmup adimlarindaki (duzeltilmis raw, GT) ciftleriyle
-        # Sim(3)'u YENIDEN uydur -- duzeltilmis zincir orijinalinden farkli.
+        return self._finalize_refined_trajectory(R_local_corr, t_local_corr)
+
+    def refine_with_full_ba(self, camera_calibration, feature_extractor) -> List[TrajectoryPoint]:
+        """
+        30 Eylul: refine_with_persistent_map'in AYNI surekli-KLT-takip
+        altyapisini (_build_full_flight_tracks) kullanir, ama pencerelere
+        BOLMEDEN tum ucusu TEK bir GTSAM factor graph'inde birlikte cozer.
+
+        Nicin: pencereli BA'da bir pencerenin kanitiyla diger pencerenin
+        pozlari HICBIR ZAMAN birlikte optimize edilmiyordu -- bloklar
+        arasi tek baglanti zayif bir anchor kisitiydi. Tam BA'da TUM
+        pozlar + TUM izler ayni grafikte -- tek bir gurultulu olcumun
+        etkisi binlerce digerinin arasinda "yutulur" (ORB-SLAM2'nin loop
+        closure sonrasi tam BA calistirma sebebi de bu).
+
+        GEREKSINIM: GTSAM, sadece WSL/Linux (bkz. refine_with_persistent_map).
+
+        Returns:
+            Duzeltilmis TrajectoryPoint listesi (self._trajectory
+            DEGISTIRILMEZ).
+        """
+        cfg = self._loader.get_persistent_ba_config()
+        min_track_len = int(cfg["min_track_len_in_window"])
+        max_tracks = int(cfg.get("full_ba_max_tracks", 3000))
+        parallax_cos_threshold = float(cfg["parallax_cos_threshold"])
+
+        K = camera_calibration.K
+        f_focal = float(np.sqrt(camera_calibration.fx * camera_calibration.fy))
+
+        R_local_all = [s["R_local"] for s in self._local_steps]
+        t_local_all = [s["t_local"] for s in self._local_steps]
+        N = len(self._local_steps)
+
+        logger.info("[PoseGraph] refine_with_full_ba: surekli KLT takibi baslatiliyor (%d adim)...", N)
+        global_tracks = _build_full_flight_tracks(self._loader, camera_calibration, feature_extractor, cfg)
+        logger.info("[PoseGraph] refine_with_full_ba: %d track bulundu (medyan uzunluk=%.1f)",
+                     len(global_tracks),
+                     float(np.median([len(t["obs"]) for t in global_tracks])) if global_tracks else 0.0)
+
+        R_init = [np.eye(3)]
+        t_init = [np.zeros(3)]
+        for i in range(N):
+            t_init.append(t_init[-1] + R_init[-1] @ t_local_all[i])
+            R_init.append(R_init[-1] @ R_local_all[i])
+
+        all_tracks = []
+        for tr in global_tracks:
+            sliced = _slice_track_to_window(tr, 0, N, min_track_len)
+            if sliced is not None and _parallax_ok(K, sliced, R_init, t_init, parallax_cos_threshold):
+                all_tracks.append(sliced)
+
+        logger.info("[PoseGraph] refine_with_full_ba: %d/%d track paralaks kapisindan gecti",
+                     len(all_tracks), len(global_tracks))
+
+        if len(all_tracks) > max_tracks:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(len(all_tracks), max_tracks, replace=False)
+            all_tracks = [all_tracks[i] for i in idx]
+
+        if not all_tracks:
+            return self._finalize_refined_trajectory(R_local_all, t_local_all)
+
+        logger.info("[PoseGraph] refine_with_full_ba: GTSAM ile %d poz + %d iz tek grafikte cozuluyor...",
+                     N + 1, len(all_tracks))
+        R_out, t_out = _solve_window_gtsam(K, f_focal, R_init, t_init, all_tracks, len(all_tracks), cfg)
+
+        R_local_corr = [R_out[i].T @ R_out[i + 1] for i in range(N)]
+        t_local_corr = [R_out[i].T @ (t_out[i + 1] - t_out[i]) for i in range(N)]
+
+        return self._finalize_refined_trajectory(R_local_corr, t_local_corr)
+
+    def _finalize_refined_trajectory(self, R_local_corr, t_local_corr) -> List[TrajectoryPoint]:
+        """Duzeltilmis yerel adim poz farklarindan (R_local_corr/t_local_corr,
+        pencereli BA'dan ya da loop-closure PGO'dan gelebilir) dunya karesine
+        yeniden zincirler, warmup ciftleriyle Sim(3)'u YENIDEN uydurur.
+        refine_with_persistent_map VE refine_with_loop_closure tarafindan
+        ortak kullanilir -- ikisi de "adim listesi -> nihai TrajectoryPoint
+        listesi" donusumunu ayni sekilde yapmali."""
         R_world = np.eye(3)
         t_world = np.zeros(3)
         gt_pairs = []
@@ -588,6 +913,123 @@ class PoseGraph:
             ))
 
         return refined
+
+    def refine_with_rotation_smoothing(self, window: int = 7) -> List[TrajectoryPoint]:
+        """
+        28-29 Eylul windowcheck.py testinde dogrulanan ucuz yontem: gecerli
+        adimlarin R_local'ini (Rodrigues vektoru uzerinden) merkezli medyan
+        filtresiyle yumusatir, t_local'a DOKUNMAZ. BA/loop closure'dan farkli
+        olarak reprojection hatasini optimize etmez -- sadece komsu
+        donuslerin tutarliligini zorlar (gercek bir BA degil).
+
+        Pencere=7 sonucu (windowcheck.py, force_2d ile, otonom-sadece
+        metrik, 2026 ucusu): 53.84m -> 47.06m (%12.6 iyilesme), yon hatasi
+        |medyan| 23.21 -> 19.20 derece, lag-1 otokorelasyon 0.42 -> 0.37
+        (dustu, artmadi). Pencere>=15 kotulesir -- asiri yumusatma gercek
+        donusleri bulaniklastirir (bkz. tanı.md, 29 Eylul).
+
+        NOT: merkezli (centered) filtre -- her adim kendinden sonraki
+        adimlara da bakar. Bu yuzden SADECE offline/toplu (butun ucus
+        bittikten sonra, refine_with_persistent_map gibi) kullanilir;
+        update()'in canli/sirali akisina entegre edilemez (gelecek
+        veriye ihtiyac duyar).
+        """
+        valid_idx = [i for i, s in enumerate(self._local_steps) if s["mode"] != "invalid"]
+        R_local_corr = [s["R_local"].copy() for s in self._local_steps]
+        t_local_corr = [s["t_local"].copy() for s in self._local_steps]
+
+        if window > 1 and len(valid_idx) >= 2:
+            rvecs = np.array([cv2.Rodrigues(self._local_steps[i]["R_local"])[0].flatten()
+                               for i in valid_idx])
+            smoothed = np.copy(rvecs)
+            half = window // 2
+            for j in range(len(rvecs)):
+                lo, hi = max(0, j - half), min(len(rvecs), j + half + 1)
+                smoothed[j] = np.median(rvecs[lo:hi], axis=0)
+            for k, i in enumerate(valid_idx):
+                R_local_corr[i], _ = cv2.Rodrigues(smoothed[k])
+
+        return self._finalize_refined_trajectory(R_local_corr, t_local_corr)
+
+    def refine_with_loop_closure(self, camera_calibration, feature_extractor,
+                                  matcher, motion_estimator) -> List[TrajectoryPoint]:
+        """refine_with_persistent_map'in ayni pencereli-BA "backbone"unu
+        hesaplar, SONRA ikinci bir asama ekler: goruntuye bakarak (GT
+        KULLANMADAN) zamanda uzak ama ayni yeri goren kare ciftlerini
+        (loop closure adaylari) bulur, bunlari GTSAM'e paylasilan 3B
+        nokta (landmark) kisitlari olarak ekleyip TUM ucusu tek bir
+        kuresel pose-graph'ta yeniden coz. Pencereler arasi (windowed BA
+        tek basina hicbir zaman goremeyecegi) uzun-menzilli kanit boylece
+        devreye giriyor.
+
+        GEREKSINIM: GTSAM (bkz. refine_with_persistent_map'teki not).
+        """
+        cfg = self._loader.get_persistent_ba_config()
+        window = int(cfg["window"])
+        min_track_len = int(cfg["min_track_len_in_window"])
+        max_tracks = int(cfg["max_tracks_per_window"])
+        parallax_cos_threshold = float(cfg["parallax_cos_threshold"])
+
+        K = camera_calibration.K
+        f_focal = float(np.sqrt(camera_calibration.fx * camera_calibration.fy))
+
+        R_local_all = [s["R_local"] for s in self._local_steps]
+        t_local_all = [s["t_local"] for s in self._local_steps]
+        N = len(self._local_steps)
+
+        logger.info("[PoseGraph] refine_with_loop_closure: surekli KLT takibi baslatiliyor (%d adim)...", N)
+        global_tracks = _build_full_flight_tracks(self._loader, camera_calibration, feature_extractor, cfg)
+
+        rng = np.random.default_rng(0)
+        R_local_corr = [r.copy() for r in R_local_all]
+        t_local_corr = [t.copy() for t in t_local_all]
+
+        R0, t0 = np.eye(3), np.zeros(3)
+        start = 0
+        while start < N - 1:
+            n = min(window - 1, N - 1 - start)
+            end = start + n
+
+            R_init = [R0.copy()]
+            t_init = [t0.copy()]
+            for i in range(n):
+                t_init.append(t_init[-1] + R_init[-1] @ t_local_all[start + i])
+                R_init.append(R_init[-1] @ R_local_all[start + i])
+
+            win_tracks = []
+            for tr in global_tracks:
+                sliced = _slice_track_to_window(tr, start, end, min_track_len)
+                if sliced is not None and _parallax_ok(K, sliced, R_init, t_init, parallax_cos_threshold):
+                    win_tracks.append(sliced)
+
+            if not win_tracks:
+                R0, t0 = R_init[-1], t_init[-1]
+                start = end
+                continue
+
+            if len(win_tracks) > max_tracks:
+                idx = rng.choice(len(win_tracks), max_tracks, replace=False)
+                win_tracks = [win_tracks[i] for i in idx]
+
+            R_out, t_out = _solve_window_gtsam(K, f_focal, R_init, t_init, win_tracks, len(win_tracks), cfg)
+
+            for i in range(n):
+                R_local_corr[start + i] = R_out[i].T @ R_out[i + 1]
+                t_local_corr[start + i] = R_out[i].T @ (t_out[i + 1] - t_out[i])
+
+            R0, t0 = R_out[-1], t_out[-1]
+            start = end
+
+        logger.info("[PoseGraph] refine_with_loop_closure: backbone hazir, loop kapatma taraniyor...")
+        frame_paths = [self._loader.frames_dir / step["frame_name"] for step in self._local_steps]
+        loops = _detect_loop_closures(self._loader, feature_extractor, matcher, motion_estimator, frame_paths, cfg)
+        logger.info("[PoseGraph] refine_with_loop_closure: %d loop adayi bulundu", len(loops))
+
+        if loops:
+            R_local_corr, t_local_corr = _apply_loop_closure_pgo(
+                K, R_local_corr, t_local_corr, loops, cfg, self._loader, camera_calibration)
+
+        return self._finalize_refined_trajectory(R_local_corr, t_local_corr)
 
     # ------------------------------------------------------------------
     # Trajectory access

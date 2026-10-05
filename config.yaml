@@ -20,6 +20,32 @@ features:
   n_levels: 8
   ransac_threshold: 3.0
   lowe_ratio: 0.75
+  # 29 Eylul: ORB'da ORB-SLAM2'nin quadtree'si gibi uzamsal dagilim kontrolu
+  # yoktu. Olcum (quadtree_check.py, 2026): inlier keypoint'lerin goruntude
+  # kumelendigi adimlarda yon hatasi cok daha yuksek (doluluk<0.2 -> medyan
+  # 66.5 derece, doluluk>=0.6 -> medyan 12.9 derece, korelasyon -0.21).
+  # spatial_distribution: true, ORB'u fazla-orneklenmis (oversample x
+  # kat) calistirip goruntuyu ~max_features hucrelik bir izgaraya bolup
+  # her hucrede en guclu (response) tek keypoint'i tutar -- kumelenmeyi
+  # yapisal olarak engeller.
+  spatial_distribution: false
+  spatial_distribution_oversample: 3
+  # 3 Ekim: DL front-end swap (problemler.md SS2.12). detector_type: 'orb'
+  # (varsayilan, degismedi) ya da 'superpoint'. descriptor_norm, matcher.py'nin
+  # hangi mesafe metrigini kullanacagini belirler -- ORB (ikili) icin 'hamming',
+  # SuperPoint (ondalikli) icin 'l2' olmali. device: 'auto' (varsa CUDA, yoksa CPU).
+  detector_type: orb
+  descriptor_norm: hamming
+  device: auto
+  # 3 Ekim: eskiden motion_estimator.py'de sabit (0.45) kod-ici sabitti,
+  # artik config'ten okunuyor -- SuperPoint taramasi (problemler.md SS2.14)
+  # bu esigin detector_type'a gore cok farkli optimum istedigini gosterdi.
+  # Bu deger (0.45) SADECE ORB icin gecerli, degistirilmedi.
+  homography_score_ratio_threshold: 0.45
+  # matcher_type: 'classical' (BF+Lowe ratio, varsayilan) ya da
+  # 'lightglue' (transformer tabanli joint esleme). ORB icin classical
+  # kalmali -- LightGlue SuperPoint/DISK/SIFT descriptor'lariyla egitildi.
+  matcher_type: classical
 semantic:
   min_confidence: 0.7
   dynamic_classes:
@@ -50,7 +76,12 @@ evaluation:
   warmup_frames: 150
   calculate_ate: true
   ate_3d: true
-  force_2d: false
+  force_2d: true   # 28 Eylul: motion_estimator'in yerel Z biriminde sistematik yanlilik bulundu (adimlarin %85'i asagi
+                    # yonlu, GT irtifasi -5/+25m araligindayken tahminimiz -186m'ye sapiyordu) -- kok neden BULUNAMADI
+                    # (kalibrasyon/cy taramasi, 2 farkli kalibrasyon denemesi, gimbal-egim hepsi elendi). Z'yi sifirlamak
+                    # (GT'nin kucuk irtifa araligina gore "duz uctugumuzu varsay") pratik bir gecici cozum: uretim
+                    # 62.66->31.25m (main.py), BA 45.48->30.71m -- BA ilk kez uretimi GERCEKTEN geciyor. Kok neden
+                    # bulunursa bu bayragi tekrar degerlendir.
   min_sim3_samples: 10
   frame_step: 5
 persistent_ba:
@@ -65,10 +96,31 @@ persistent_ba:
   max_tracks_per_window: 150     # 300 denendi, degisiklik yaratmadi (24 Eylul)
   parallax_cos_threshold: 0.999   # 0.99998(eski)=54.86m, 0.995=47.01m, 0.999=45.48m EN IYI (24 Eylul)
   pixel_noise_sigma: 1.5         # ORB eslesme tipik piksel gurultusu -- tum faktorler bunu paylasir -- 3.0 denendi, degisiklik yaratmadi (24 Eylul)
-  anchor_sigma: 1.0e-3   # 1e-6=45.48m, 1e-2=57.70m, 1e-1=60.96m hepsi kotu -- 1e-3 EN IYI (24 Eylul)
+  anchor_sigma: 1.0e-6   # 24 Eylul'de 1e-3 "en iyi" bulunmustu, AMA sadece bu ucusta (tum-ucus, isinma-dahil
+                          # metrikle). 25 Eylul: 1e-3 diger ucuslarda kotu genelliyor. 28 Eylul (dogru,
+                          # otonom-sadece metodolojiyle YENIDEN dogrulandi, Z-sürüklenme duzeltmesi
+                          # (force_2d) sonrasi): 2026 ucusunda 1e-3 uretimi +%2.5 geciyor, AMA oturum3'te
+                          # -%41.6 batıyor -- anchor_sigma'nin "dogru" degeri ucusa gore degisiyor, evrensel
+                          # optimum yok. 1e-6 hicbir ucusta -%5'ten kotu cikmadi -- guvenli varsayilan bu.
+                          # (Not: 25 Eylul'deki "dongu anomalisi" aciklamasi kismen yanlisti -- o zamanki
+                          # gorsel karsilastirma isinma penceresini otonom moddan ayirmiyordu, bkz. tani.md
+                          # 28 Eylul notlari icin dogru resim.) 4 ucuslu eski (tum-ucus) kiyaslama: 1e-3 ->
+                          # 2026=+%48.3 ama oturum3=-%41.6 (felaket); 1e-6 -> 2026=+%27.4, 2024=+%9.7 (degismedi), oturum3=-%3.9 (neredeyse
+                          # notr). 1e-6 daha az etkileyici ama COK daha saglam/genellenebilir -- yeni varsayilan.
   klt_win_size: 63   # 91 denendi, cok kotu cikti (24 Eylul)
   klt_max_level: 6   # 8 denendi, degisiklik yaratmadi (24 Eylul)
   klt_fb_threshold: 1.5          # ileri-geri piksel hatasi esigi -- 3.0 denendi, cok kotu cikti (24 Eylul)
+  # -- Loop closure (28 Eylul, refine_with_loop_closure) --
+  loop_keyframe_stride: 5        # ucusu bu kadar arayla seyreltip anahtar kare listesi cikar
+  loop_min_keyframe_gap: 4       # aday ciftler en az bu kadar anahtar-kare arayla olsun (yakin/ardisik cift arama)
+  loop_min_inlier: 40             # esik-sikilastirma tek basina yetmedi (40/100/150 -> 65/50/64m, monoton bile degil) -- 28 Eylul'de ORB-SLAM2 makalesinden sonra loop_consistency_angle_deg eklendi, esik tekrar 40'a (orijinal, en az kisitlayici) dondu -- artik komsu-dogrulama sahte-pozitifleri elesin
+  loop_consistency_angle_deg: 15.0  # (a,b) adayi kabul edilmeden once komsu cift (a+1,b+1) da gecerli eslesme vermeli VE donmesi buna en fazla bu kadar (derece) yakin olmali -- ORB-SLAM2/DBoW2'nin "temporal consistency" kontrolu (28 Eylul)
+  loop_max_points: 60            # bir loop cifti icin en fazla kac eslesen nokta landmark'a donusturulsun (hesap maliyeti icin sinir)
+  loop_odom_rot_sigma: 0.05      # 0.01 denendi -- zincir cok kati kaldi, 738 landmark bile onu bukemedi (sonuc BA-only ile birebir ayniydi, 28 Eylul). 0.05 ile loop kanitina biraz kaldirac gucu veriliyor
+  loop_odom_trans_sigma: 0.2     # 0.05 denendi, ayni sebeple gevsetildi
+  loop_rot_sigma: 0.02           # ARTIK KULLANILMIYOR (v2 BetweenFactorPose3 yaklasimi, 28 Eylul'de terk edildi) -- v3'te landmark-tabanli yaklasima gecildi, bkz. loop_landmark_back_k
+  loop_trans_sigma: 5.0          # ARTIK KULLANILMIYOR (bkz. yukarisi)
+  loop_landmark_back_k: 7        # loop noktasini i'den geriye kac kare KLT ile izleyip ucuncu gorunumu (i-back_k) olusturalim -- gercek taban cizgisi icin (28 Eylul, v3)
 logging:
   level: INFO
   log_to_file: false
