@@ -26,6 +26,8 @@ import evaluate_canonical as ev  # noqa: E402
 
 ROOT = ev.ROOT
 OUT = os.path.join(ROOT, "results", "figures")
+# GT iceren ust uste bindirme gorselleri repoya girmez; yerel klasore yazilir
+OUT_GT_LOCAL = os.path.join(ROOT, "results", "figures_gt_local")
 FLIGHTS = ["2026", "oturum_3", "2024"]
 
 
@@ -43,6 +45,7 @@ def trajectory(steps, gt):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    os.makedirs(OUT_GT_LOCAL, exist_ok=True)
     results = {}
     for flight, front, gt_path, pkl, key in ev.RUNS:
         gt = ev.load_gt(gt_path)
@@ -64,7 +67,7 @@ def main():
         axes[0].set_ylabel("y [m]")
         fig.suptitle(f"{flight}: yörünge şekli (GT'ye Sim(3) hizalı, ideal ölçüm)", fontsize=12)
         fig.tight_layout()
-        fig.savefig(os.path.join(OUT, f"overlay_{flight}.png"), dpi=130)
+        fig.savefig(os.path.join(OUT_GT_LOCAL, f"overlay_{flight}.png"), dpi=130)
         plt.close(fig)
 
     # 2) sekil cubuk grafigi

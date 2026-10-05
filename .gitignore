@@ -83,3 +83,6 @@ experiments/sift_flann_baseline.py
 # Yayin gorselleri (results/figures) repoya girer
 !results/figures/
 !results/figures/*.png
+
+# GT iceren yerel gorseller (repoya girmez)
+results/figures_gt_local/
