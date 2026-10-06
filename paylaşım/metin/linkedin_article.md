@@ -2,17 +2,17 @@ Tek kameradan GNSS'siz yörünge tahmini: ölçek neden çözülmedi
 
 Bu projede tek bir kameradan, GPS olmadan bir drone'un nereden nereye uçtuğunu çıkarmaya çalıştım. Buna görsel odometri deniyor. Kamera her karede bir öncekine göre ne kadar döndüğünü ve hangi yöne kaydığını söyleyebiliyor. Ama kaydığı mesafenin kaç metre olduğunu söyleyemiyor. Bu, tek kameralı sistemlerin bilinen en büyük sorunu ve bu çalışmanın asıl konusu da bu.
 
-Başta hedefim yarışmadaki gibi konum hatasını (RMSE) mümkün olduğunca düşürmekti. Zamanla bu hedefin bu veriyle ulaşılabilir olmadığını gördüm ve ölçütü değiştirdim. Aşağıda hem sonuçları hem de bu değişikliği anlatıyorum; hatalı yorumlarımı da geri çektim ve bunlar sonucun bir parçası.
+Başta hedefim yarışmadaki gibi konum hatasını (RMSE) mümkün olduğunca düşürmekti. Ama ölçek çözülemediği için konum hatası bu sistemin asıl kalitesini yansıtmıyor. Bu yüzden ana ölçütü yön hatasına çevirdim. Konum hatasını yine de raporluyorum, çünkü yarışmanın ölçütü bu ve 2026'daki kötüleşme sonucun parçası. Hatalı yorumlarımı da geri çektim; bunlar da sonucun bir parçası.
 
 Veri ve ölçütler
 
 Üç uçuş kullandım: 2026 ve oturum_3 yarışmanın sağladığı iki uçuş, 2024 ise yalnızca XY düzleminde değerlendirilebilen bir uçuş (yüksekliği yok). Veriyi TEKNOFEST Havacılıkta Yapay Zeka Yarışması sağladı.
 
 Değerlendirmede dört şeye baktım:
-- Şekil hatası (ATE): Tüm yörünge GT'ye Sim(3) ile hizalanıyor ve kalan hata ölçülüyor. Monoküler odometri çalışmalarında yaygın bir ölçüt. Ama hizalamayı GT ile yaptığım için bu ideal bir ölçüm; uçuşta elde edemeyeceğim bir sayı.
+- Yön hatası (ana ölçüt): Hızın yönü ile GT'deki hızın yönü arasındaki fark (medyan). Ölçeğe bağlı olmadığı için bu sistemde en güvenilir ölçüt bu.
 - Alt yol hatası (RPE): KITTI'deki gibi 100 ile 800 metre arasındaki alt yollarda, yol uzunluğuna oranla göreli öteleme hatası.
-- Konum hatası (RMSE): İlk 450 karenin GT ile hizalanmasından sonra, ölçekle birlikte ölçülen gerçek konum hatası.
-- Yön hatası: Hızın yönü ile GT'deki hızın yönü arasındaki fark.
+- Şekil hatası (ATE): Tüm yörünge GT'ye Sim(3) ile hizalanıyor ve kalan hata ölçülüyor. Hizalamayı GT ile yaptığım için bu ideal bir ölçüm; uçuşta elde edemeyeceğim bir sayı.
+- Konum hatası (RMSE, ikincil): İlk 450 karenin GT ile hizalanmasından sonra, ölçekle birlikte ölçülen konum hatası. Ölçek yanlış olduğu için bu sayı ana ölçüt değil.
 
 Her ön ucu aynı bütçeyle, altı ayar kombinasyonuyla denedim. Seçimi yalnızca 2026 ve oturum_3 üzerinde yaptım; 2024'ü seçimden bağımsız bir kontrol olarak tuttum.
 
@@ -26,14 +26,14 @@ Sonuçlar
 
 Seçilen ayarlarla sonuçlar:
 
-- 2026, ORB: şekil 40,9 m, alt yol RPE %24,7, yön hatası 22,0°, konum RMSE 67,7 m
-- 2026, SuperPoint+LG: şekil 28,0 m, alt yol RPE %16,7, yön hatası 6,2°, konum RMSE 113,1 m
-- oturum_3, ORB: şekil 21,0 m, alt yol RPE %11,8, yön hatası 5,5°, konum RMSE 41,2 m
-- oturum_3, SuperPoint+LG: şekil 14,0 m, alt yol RPE %8,3, yön hatası 3,9°, konum RMSE 41,3 m
-- 2024 (yalnızca XY), ORB: şekil 72,1 m, alt yol RPE %19,4, yön hatası 17,6°, konum RMSE 153,2 m
-- 2024 (yalnızca XY), SuperPoint+LG: şekil 44,1 m, alt yol RPE %13,3, yön hatası 13,5°, konum RMSE 119,2 m
+- 2026, ORB: yön hatası 22,0°, alt yol RPE %24,7, şekil 40,9 m, konum RMSE 67,7 m
+- 2026, SuperPoint+LG: yön hatası 6,2°, alt yol RPE %16,7, şekil 28,0 m, konum RMSE 113,1 m
+- oturum_3, ORB: yön hatası 5,5°, alt yol RPE %11,8, şekil 21,0 m, konum RMSE 41,2 m
+- oturum_3, SuperPoint+LG: yön hatası 3,9°, alt yol RPE %8,3, şekil 14,0 m, konum RMSE 41,3 m
+- 2024 (yalnızca XY), ORB: yön hatası 17,6°, alt yol RPE %19,4, şekil 72,1 m, konum RMSE 153,2 m
+- 2024 (yalnızca XY), SuperPoint+LG: yön hatası 13,5°, alt yol RPE %13,3, şekil 44,1 m, konum RMSE 119,2 m
 
-ORB'dan SuperPoint+LG'ye geçişte şekil, alt yol ve yön hatası üç uçuşun üçünde de düştü. En büyük değişim 2026'daki yön hatasında: %71,8 azalma. Konum hatası ise tutarlı değil: 2026'da %67 arttı, oturum_3'te değişmedi, 2024'te %22 düştü.
+ORB'dan SuperPoint+LG'ye geçişte yön, alt yol ve şekil hatası üç uçuşun üçünde de düştü. En net değişim yön hatasında: 2026'da %71,8 azalma. Konum RMSE'si ise tutarlı değil: 2026'da %67 arttı, oturum_3'te değişmedi, 2024'te %22 düştü.
 
 [Görsel: Şekil hatası, ORB ve SuperPoint+LG]
 

@@ -4,7 +4,7 @@
 
 Bu projede tek bir kameradan, GPS olmadan bir drone'un nereden nereye uçtuğunu çıkarmaya çalıştım. Buna görsel odometri deniyor. Kamera her karede bir öncekine göre ne kadar döndüğünü ve hangi yöne kaydığını söyleyebiliyor. Ama kaydığı mesafenin kaç metre olduğunu söyleyemiyor. Bu, tek kameralı sistemlerin bilinen en büyük sorunu ve bu çalışmanın asıl konusu da bu.
 
-Başta hedefim yarışmadaki gibi konum hatasını (RMSE) mümkün olduğunca düşürmekti. Zamanla bu hedefin bu veriyle ulaşılabilir olmadığını gördüm ve ölçütü değiştirdim. Aşağıda hem sonuçları hem de bu değişikliği anlatıyorum; hatalı yorumlarımı da geri çektim ve bunlar sonucun bir parçası.
+Başta hedefim yarışmadaki gibi konum hatasını (RMSE) mümkün olduğunca düşürmekti. Ölçek çözülemediği için konum hatası bu sistemin asıl kalitesini yansıtmıyor. Bu yüzden ana ölçütü yön hatasına çevirdim. Konum hatasını yine de raporluyorum, çünkü yarışmanın ölçütü bu ve 2026'daki kötüleşme sonucun parçası. Hatalı yorumlarımı da geri çektim; bunlar da sonucun bir parçası.
 
 ## Veri ve ölçütler
 
@@ -12,10 +12,10 @@ Başta hedefim yarışmadaki gibi konum hatasını (RMSE) mümkün olduğunca d�
 
 Değerlendirmede dört şeye baktım:
 
-- **Şekil hatası (ATE):** Tüm yörünge GT'ye Sim(3) ile hizalanıyor ve kalan hata ölçülüyor. Monoküler odometri çalışmalarında yaygın bir ölçüt. Ama hizalamayı GT ile yaptığım için bu ideal bir ölçüm; uçuşta elde edemeyeceğim bir sayı.
+- **Yön hatası (ana ölçüt):** Hızın yönü ile GT'deki hızın yönü arasındaki fark (medyan). Ölçeğe bağlı olmadığı için bu sistemde en güvenilir ölçüt bu.
 - **Alt yol hatası (RPE):** KITTI'deki gibi 100 ile 800 metre arasındaki alt yollarda, yol uzunluğuna oranla göreli öteleme hatası.
-- **Konum hatası (RMSE):** İlk 450 karenin GT ile hizalanmasından sonra, ölçekle birlikte ölçülen gerçek konum hatası.
-- **Yön hatası:** Hızın yönü ile GT'deki hızın yönü arasındaki fark.
+- **Şekil hatası (ATE):** Tüm yörünge GT'ye Sim(3) ile hizalanıyor ve kalan hata ölçülüyor. Hizalamayı GT ile yaptığım için bu ideal bir ölçüm; uçuşta elde edemeyeceğim bir sayı.
+- **Konum hatası (RMSE, ikincil):** İlk 450 karenin GT ile hizalanmasından sonra, ölçekle birlikte ölçülen konum hatası. Ölçek yanlış olduğu için bu sayı ana ölçüt değil.
 
 Her ön ucu aynı bütçeyle, altı ayar kombinasyonuyla denedim. Seçimi yalnızca 2026 ve oturum_3 üzerinde yaptım; 2024'ü seçimden bağımsız bir kontrol olarak tuttum.
 
@@ -27,30 +27,30 @@ Poz tahmininde esansiyel matrisle dönüş ve birim öteleme elde ediliyor. Homo
 
 ## Sonuçlar
 
-| uçuş | ön uç | şekil ATE (m) | alt yol RPE (%) | yön hatası (°) | konum RMSE (m) |
+| uçuş | ön uç | yön hatası (°) | alt yol RPE (%) | şekil ATE (m) | konum RMSE (m, ikincil) |
 |---|---|---|---|---|---|
-| 2026 | ORB | 40,9 | 24,7 | 22,0 | 67,7 |
-| 2026 | SuperPoint+LG | 28,0 | 16,7 | 6,2 | 113,1 |
-| oturum_3 | ORB | 21,0 | 11,8 | 5,5 | 41,2 |
-| oturum_3 | SuperPoint+LG | 14,0 | 8,3 | 3,9 | 41,3 |
-| 2024 (yalnızca XY) | ORB | 72,1 | 19,4 | 17,6 | 153,2 |
-| 2024 (yalnızca XY) | SuperPoint+LG | 44,1 | 13,3 | 13,5 | 119,2 |
+| 2026 | ORB | 22,0 | 24,7 | 40,9 | 67,7 |
+| 2026 | SuperPoint+LG | 6,2 | 16,7 | 28,0 | 113,1 |
+| oturum_3 | ORB | 5,5 | 11,8 | 21,0 | 41,2 |
+| oturum_3 | SuperPoint+LG | 3,9 | 8,3 | 14,0 | 41,3 |
+| 2024 (yalnızca XY) | ORB | 17,6 | 19,4 | 72,1 | 153,2 |
+| 2024 (yalnızca XY) | SuperPoint+LG | 13,5 | 13,3 | 44,1 | 119,2 |
 
 ORB'dan SuperPoint+LG'ye geçişte değişim:
 
-| uçuş | şekil ATE | alt yol RPE | yön hatası | konum RMSE |
+| uçuş | yön hatası | alt yol RPE | şekil ATE | konum RMSE (ikincil) |
 |---|---|---|---|---|
-| 2026 | −%31,5 | −%32,4 | −%71,8 | +%67,1 |
-| oturum_3 | −%33,4 | −%29,1 | −%28,4 | +%0,1 |
-| 2024 (yalnızca XY) | −%38,7 | −%31,3 | −%23,6 | −%22,2 |
+| 2026 | −%71,8 | −%32,4 | −%31,5 | +%67,1 |
+| oturum_3 | −%28,4 | −%29,1 | −%33,4 | +%0,1 |
+| 2024 (yalnızca XY) | −%23,6 | −%31,3 | −%38,7 | −%22,2 |
 
-Şekil, alt yol hatası ve yön hatası üç uçuşun üçünde de düştü. En büyük değişim 2026'daki yön hatasında: medyan 22,0°'den 6,2°'ye indi. Konum hatası ise tutarlı değil: 2026'da arttı, oturum_3'te değişmedi, 2024'te düştü.
+En net değişim yön hatasında: 2026'da medyan 22,0°'den 6,2°'ye indi ve üç uçuşun üçünde de düştü. Alt yol ve şekil hatası da üç uçuşta düştü. Konum RMSE'si ise tutarlı değil: 2026'da arttı, oturum_3'te değişmedi, 2024'te düştü. Ölçek yanlış olduğu için bu sayıyı ana sonuç değil, sistemin sınırının göstergesi olarak okumak gerekir.
 
 Şekil hatasının dağılımı için aşağıdaki grafiğe bakılabilir.
 
 ![Şekil hatası, ORB ve SuperPoint+LG](../gorseller/sekil_cubuk.png)
 
-Ama konum hatası tabloyu başka bir yere çekiyor. 2026'da SuperPoint ile konum hatası 113 metre, ORB ile 68 metre. Yani şekli daha iyi yakalayan ön uç, metrik olarak daha kötü bir yörünge üretti. Bunun büyük olasılıkla sebebi ölçek: şekil doğru olabilir ama boyut yanlışsa konum hatası büyür.
+Konum hatası ise bu tabloda ayrı bir hikâye anlatıyor. 2026'da SuperPoint ile konum hatası 113 metre, ORB ile 68 metre. Yani yönü ve şekli daha iyi yakalayan ön uç, metrik olarak daha kötü bir yörünge üretti. Bunun büyük olasılıkla sebebi ölçek: şekil doğru olabilir ama boyut yanlışsa konum hatası büyür.
 
 Yörüngenin şekli, GT'siz bir figürle de görülebilir. Aşağıda oturum_3 için iki ön ucun tahmini yer alıyor; GT çizilmedi, hizalama yalnızca ölçüm için kullanıldı.
 
