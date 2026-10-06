@@ -77,6 +77,10 @@ Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer a
 
 Veri yolları, kamera parametreleri ve ayarlar `config*.yaml` dosyalarında tanımlanır. Veri ve GT bu repoda bulunmaz (`.gitignore` ile dışlanmıştır).
 
+## Veri ve geçmiş notu
+
+Bu repodaki commit geçmişinde, çalışmanın ilk aşamalarında eklenmiş yarışma veri dosyaları (ground truth ve tespit verisi) bulunabilir. Bu veriler yeniden dağıtılmaz; geçmiş olduğu gibi bırakılmıştır. Güncel ağaçta bu dosyalar izlenmez. Veri kullanım koşulları veri sahibi organizatörler tarafından belirlenir; bu repodan veri indirmek için kendi erişiminizi kullanmanız gerekir.
+
 ## Lisans
 
 Kod için henüz bir lisans seçilmedi. Kullanılan veri setleri kendi lisanslarına tabidir.
