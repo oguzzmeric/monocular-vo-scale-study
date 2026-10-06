@@ -6,10 +6,16 @@ Proje kapanmıştır. Kapanış raporu: [KAPANIS_RAPORU.md](KAPANIS_RAPORU.md). 
 
 ## Yöntem
 
-1. **Özellik ve eşleştirme:** SuperPoint + LightGlue (karşılaştırma: ORB, SIFT+FLANN).
+1. **Özellik ve eşleştirme:** SuperPoint + LightGlue (karşılaştırma: ORB).
 2. **Poz tahmini:** Esansiyel matris (E-only; homografi yolu kapalı).
 3. **Birikim:** Birim öteleme ve rotasyonlar, yörünge oluşturacak şekilde birleştirilir.
 4. **Ölçek:** Metrik ölçek sensörsüz çözülemedi; ayrı bir sorun olarak raporlanır.
+
+## Kurulum
+
+```
+pip install -r requirements.txt
+```
 
 ## Değerlendirme
 
@@ -19,10 +25,10 @@ Tüm sayılar tek bir kanonik betikle üretilir:
 python experiments/evaluate_canonical.py
 ```
 
-Çıktılar `results/canonical_table.md` ve `results/canonical_table.csv` dosyalarına yazılır. Betik, GT ve veri yollarını yapılandırmadan okur; GT verisi bu repoda yoktur, kendi kopyanızı sağlamanız gerekir.
+Çıktılar `results/canonical_table.md` ve `results/canonical_table.csv` dosyalarına yazılır. Veri yolları betik içinde sabit olarak tanımlıdır. Betik, `data/` altındaki adım kayıtlarını (`grid_*.pkl`) ve GT dosyalarını bekler; bunlar bu repoda yoktur, kendi kopyanızla sağlamanız gerekir.
 
 Ölçütler:
-- **Şekil ATE (m):** Tüm yörünge GT'ye Sim(3) ile hizalanır; kalan 3D RMS. Ideal bir ölçümdür (hizalama GT kullanır).
+- **Şekil ATE (m):** Tüm yörünge GT'ye Sim(3) ile hizalanır; kalan 3D RMS. İdeal bir ölçümdür (hizalama GT kullanır).
 - **Alt yol RPE (%):** KITTI tarzı, 100–800 m alt yollar üzerinde göreli ötelemeyi ölçer.
 - **Konum RMSE (m):** İlk 450 karenin GT ile hizalanmasıyla, üretim ölçeğinde ölçülen gerçek konum hatası.
 - **Yön hatası (°):** Hizalanmış yörüngenin hız yönü ile GT hız yönü farkı (medyan).
@@ -67,7 +73,7 @@ Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer a
 
 - `core/`: pipeline modülleri (özellik, eşleştirme, poz, ölçek, poz grafiği).
 - `utils/`: veri yükleyici ve kamera kalibrasyonu.
-- `experiments/`: kanonik değerlendirme, figürler, EuRoC doğrulama betikleri.
+- `experiments/`: kanonik değerlendirme, figürler, EuRoC karşılaştırma betiği (`euroc_pipeline.py`).
 - `results/`: sonuç tabloları ve GT içermeyen figürler.
 - `config.yaml`: üretim (ORB) yapılandırması. `config_final_sp_eonly.yaml`: SuperPoint+LG, yalnızca E.
 - `main.py`: giriş noktası.
