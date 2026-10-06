@@ -71,7 +71,7 @@ Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer a
 - `results/`: sonuç tabloları ve GT içermeyen figürler.
 - `config.yaml`: üretim (ORB) yapılandırması. `config_final_sp_eonly.yaml`: SuperPoint+LG, yalnızca E.
 - `main.py`: giriş noktası.
-- `archive/`: deneysel betikler, test yapılandırmaları, eski notlar ve belgeler. Repoyu yeniden üretmek için gerekmez; tarihçe için saklanır.
+- Deneysel betikler, test yapılandırmaları ve eski notlar bu repoda yer almaz; yerel olarak tutulur.
 
 ## Yapılandırma
 
