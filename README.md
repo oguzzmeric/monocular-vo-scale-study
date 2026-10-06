@@ -51,11 +51,9 @@ oturum_3 uçuşunun tahmin yörüngesi (GT gösterilmeden, doğruluk oranlarıyl
 
 Diğer uçuşlar için: `results/figures_nogt/`. Yalnızca çubuk grafikler: `results/figures/`.
 
-oturum_3 uçuşunun GT ile karşılaştırması (ORB ve SuperPoint+LG, GT hizalı):
+oturum_3 uçuşu için yalnızca tahmin yörüngesi (GT gösterilmez; doğruluk oranları görselin altında). Ölçüm, tüm yörüngenin GT'ye Sim(3) ile hizalanmasıyla yapılmıştır.
 
-![oturum_3 GT karşılaştırması](results/figures/overlay_oturum_3.png)
-
-Bu görseldeki GT, yarışma verisinden gelir; yayın izni yazılı olarak teyit edilmiştir.
+Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer almaz; veri kullanım koşulları kesinleşene kadar yalnızca GT içermeyen figürler paylaşılır.
 
 ## Bulgular ve sınırlar
 
