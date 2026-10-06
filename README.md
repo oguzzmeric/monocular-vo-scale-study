@@ -45,13 +45,13 @@ Notlar:
 
 ## Görseller
 
-oturum_3 uçuşunun tahmin yörüngesi (GT gösterilmeden, doğruluk oranlarıyla):
+2026 uçuşunun tahmin yörüngesi (GT gösterilmeden; ORB ve SuperPoint+LG yan yana, ölçütler görselde):
 
-![oturum_3 tahmin](results/figures_nogt/tahmin_oturum_3.png)
+![2026 tahmin](results/figures_nogt/tahmin_2026.png)
 
 Diğer uçuşlar için: `results/figures_nogt/`. Yalnızca çubuk grafikler: `results/figures/`.
 
-oturum_3 uçuşu için yalnızca tahmin yörüngesi (GT gösterilmez; doğruluk oranları görselin altında). Ölçüm, tüm yörüngenin GT'ye Sim(3) ile hizalanmasıyla yapılmıştır.
+Görsellerdeki yörüngeler GT'ye Sim(3) ile hizalanarak gösterilmiştir; GT çizgisi yoktur.
 
 Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer almaz; veri kullanım koşulları kesinleşene kadar yalnızca GT içermeyen figürler paylaşılır.
 
