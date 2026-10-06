@@ -86,3 +86,6 @@ experiments/sift_flann_baseline.py
 
 # GT iceren yerel gorseller (repoya girmez)
 results/figures_gt_local/
+
+# Video ciktilari (buyuk binary, repoya girmez)
+results/video/
