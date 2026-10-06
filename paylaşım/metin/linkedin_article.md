@@ -26,6 +26,10 @@ Sonuçlar
 
 Seçilen ayarlarla sonuçlar:
 
+[Görsel: Sonuç tablosu]
+
+Aynı sayılar madde madde:
+
 - 2026, ORB: yön hatası 22,0°, alt yol RPE %24,7, şekil 40,9 m, konum RMSE 67,7 m
 - 2026, SuperPoint+LG: yön hatası 6,2°, alt yol RPE %16,7, şekil 28,0 m, konum RMSE 113,1 m
 - oturum_3, ORB: yön hatası 5,5°, alt yol RPE %11,8, şekil 21,0 m, konum RMSE 41,2 m
