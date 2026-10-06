@@ -83,4 +83,4 @@ Bu repodaki commit geçmişinde, çalışmanın ilk aşamalarında eklenmiş yar
 
 ## Lisans
 
-Kod için henüz bir lisans seçilmedi. Kullanılan veri setleri kendi lisanslarına tabidir.
+Kod, [MIT lisansı](LICENSE) altında yayımlanmıştır. Kullanılan veri setleri kendi lisanslarına tabidir.
