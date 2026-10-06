@@ -1082,6 +1082,234 @@ Commit'lendi ve push edildi (`9158a71`).
 | Kör pencereli R yumuşatma (`windowcheck.py`)             | Pencere=7'ye kadar Sim(3)/yön hatası iyileşir ama HIZALANMAMIS metrik baştan itibaren kötüleşir; otokorelasyon büyür (0.38→0.70). Gerçek dönüşleri bulanıklaştırıyor.                                                    |
 | `R_H` eşiğine (0.45) yakınlık ~ yön hatası (`rhcheck.py`)| Korelasyon **-0.15** (yok). Eşiğe yakın kareler paradoksal olarak daha fazla eşleşen noktaya sahip; mekanizma bulunamadı.                                                                                                 |
 
+## 25 Eylül — genellenebilirlik testi, 3 yeni uçuş, anchor_sigma döngü anomalisi
+
+`data_2024/` (1920x1080, GT'de Z yok, MATLAB kalibrasyonu kullanıcıdan
+alındı), `data_2025_oturum_3/` (3840x2160, RGB, gerçek TEKNOFEST 2025
+oturum kaydı) ve `data_2025_oturum_4/` (640x512, **termal**, aynı
+oturum kaydı) test edildi. `utils/data_loader.py`'deki `frames_dir`/
+`detections_path` hardcode'u (`raw_frames_dir`/`detections_file` config
+anahtarlarına çevrildi) ve `refine_trajectory.py`'nin sabit çıktı adı
+(artık `data/trajectory_output_<config_adı>.csv`) bu sırada düzeltildi
+— ikisi de gerçek, önceden fark edilmemiş hatalardı.
+
+**Windows/WSL OpenCV sürüm farkı bulundu** (4.13.0 vs 5.0.0) — 2026
+uçuşunda küçük etki (65.04 vs 62.66m), 2024'te büyük (163.37 vs 96.05m,
+muhtemelen o uçuşun daha yüksek decomposition-başarısızlık oranı
+nedeniyle). Kural: production/BA kıyaslaması hep aynı ortamda (WSL).
+
+**Aynı ortamda (WSL) 4 uçuşluk BA sonucu (`anchor_sigma=1e-3`,
+24 Eylül'ün "en iyi" değeri):**
+```
+2026 (RGB, tuned)     62.66 -> 32.38 m   (+%48.3)
+2024 (RGB)            96.05 -> 86.75 m   (+%9.7)
+Oturum 3 (RGB)         32.63 -> 46.21 m   (-%41.6, FELAKET)
+Oturum 4 (termal)     148.86 -> 149.40 m  (-%0.4)
+```
+
+**Görsel inceleme (GT + üretim + BA üst üste çizildi, `data/viz/`)
+kritik bir şey ortaya çıkardı:** BA'nın çıkardığı trajektoride, hem
+2026'da hem oturum_3'te, GT'de hiç karşılığı olmayan büyük **döngüler**
+var. Sayısal metrik (nokta-bazlı, zaman-eşleşmeli) bunu bazen ödüllendirip
+bazen cezalandırıyor ama trajektori şekil olarak GT'yi hiç takip etmiyor.
+
+**Kök neden teşhisi:** `anchor_sigma=1e-3` (gevşek), her pencerenin ilk
+pozunu önceki pencerenin bitişine zayıf bağlıyor. Pencere içi kanıt
+zayıfsa (kısa iz, düşük paralaks), GTSAM o pencere için **kendi içinde
+tutarlı ama küresel olarak yanlış yöne dönük** bir çözüme kayabiliyor —
+döngülerin kaynağı bu. Özünde bu, projenin en başından beri açık duran
+**yön (heading) sürüklenmesi** sorununun BA içindeki tezahürü.
+
+**Düzeltme:** `anchor_sigma` sıkılaştırıldı (`1e-3` -> `1e-6`), pencereyi
+öncekine neredeyse dondurup döngü özgürlüğünü kısıtladı. Tüm 4 uçuşta
+tekrar ölçüldü:
+```
+                    1e-3 (eski)         1e-6 (yeni)
+2026                +%48.3              +%27.4
+2024                +%9.7               +%9.7   (degismedi)
+Oturum 3            -%41.6              -%3.9   (neredeyse notr)
+Oturum 4 (termal)   -%0.4               -%1.5   (degismedi, kapsam disi)
+```
+`1e-6`, tek uçuşta en iyisi değil ama **hiçbir uçuşta felaket
+yaratmıyor** — yeni varsayılan (`config.yaml` ve tüm `config_*.yaml`
+dosyalarında güncellendi, 25 Eylül). Termal veri bilinçli olarak karar
+sürecine dahil edilmedi (proje kapsamı RGB, kullanıcı kararı).
+
+**Ayrıca bu oturumda:** loop closure için GT-tabanlı revizit kontrolü
+yapıldı (`min_gap=50 kare, close_thresh=5m`) — 3 uçuşta da (termal hariç
+bakılmadı, RGB üçlüsünde) gerçek, güçlü kendine-yakın-geçiş bulundu
+(2026: %26 kare çifti, 2024: %9 ama 1750 kare arayla/uçuşun %74'ü,
+Oturum 3: bakılmadı ayrı). Sonraki adım: loop closure — döngü
+anomalisinin yapısal çözümü de bu olabilir (pencereler arası uzun-
+menzilli, gerçek kanıta dayalı kısıt).
+
+## 28 Eylül — Z-sürüklenme keşfi, force_2d pratik çözümü, iki kendi kendini düzeltme, anchor_sigma yeniden değerlendirme
+
+Loop closure'a devam ederken (bkz. bir önceki bölüm) kullanıcı, hazırladığımız
+demo videosunu (`make_demo_video.py`, izometrik harita görünümü) izlerken
+haritanın belirli bölgelerde bozulduğunu fark etti. Bu, günün en büyük
+bulgusuna kapı açtı.
+
+### Keşif: Z (irtifa) sürüklenmesi
+
+GT irtifası (`translation_z`) tüm 2026 uçuşu boyunca -5m ile +25m arasında,
+gayet makul bir aralıkta kalıyor. Tahmini Z ise ısınmayı (frame 750) takiben
+hızla **-186 metreye** kadar dalıp kısmen toparlanıyor (`data/viz/z_karsilastirma.png`).
+
+### Kök neden arayışı — hepsi elendi
+
+1. **İrtifa/derinlik tahmini** (`ScaleRecovery._semantic_depth`, YOLO bbox
+   tabanlı) izole test edildi — GT'yi gürültülü ama **yanlışsız** şekilde
+   takip ediyor (`data/viz/irtifa_izole_karsilastirma.png`). Suçsuz.
+2. **Yerel adım vektörünün (motion_estimator çıktısı) Z bileşeni** incelendi:
+   otonom modda adımların **%85'i sistematik olarak aşağı yönlü**
+   (rastgele olsa %50 olurdu), hem H hem E ayrıştırmasında aynı yönde
+   (`data/viz/tz_bias_analizi.png`). Kare 0'dan itibaren var (ısınmada da),
+   sadece ısınmanın GT-kopyalama mekanizması yüzünden görünmüyor.
+3. **Kalibrasyon şüphesi** — üç ayrı deneme yapıldı: (a) eski
+   `config_calib_test.yaml` tahmini, (b) kullanıcının 2025 için verdiği
+   MATLAB kalibrasyonundan kırpma-türetilmiş RGB değerleri (fx≈2792,
+   cy≈1142 — distortion katsayıları bizimkiyle birebir eşleşiyordu), (c)
+   `cy`'nin 1080-1200 arasında sistematik taranması. **Üçü de etkisiz** —
+   pozitif oran hep %10-12 civarında kaldı, hiç iyileşmedi.
+4. **Gimbal/kamera eğimi** — kullanıcı donanımın gerçekten nadir olduğunu
+   doğruladı, bu da elendi.
+
+**Sonuç: kök neden bulunamadı.** Rolling shutter, sahneye özgü bir etki,
+ya da cheirality/disambiguation'da paylaşılan algoritmik bir yanlılık
+olabilir — hiçbiri doğrulanmadı, açık soru olarak kalıyor.
+
+### Pratik çözüm: force_2d
+
+Kök nedeni bulamasak da, GT irtifasının dar aralığı (~30m) göz önüne
+alınınca, Z'yi tahmin etmemek (0 varsaymak) mevcut (yanlış, 186m'ye kadar
+sapan) tahminden çok daha iyi bir seçenek. `force_2d: true` devreye alındı.
+
+### Metodoloji dersi — ısınma bedavası, iki kez yanlış sonuca götürdü
+
+İlk ölçümlerde `force_2d` ile üretim hatası 62,66m → 31,25m, BA ise 45,48m
+→ 30,71m düştü ve **BA ilk kez üretimi geçiyor** gibi görünüyordu. Ayrıca
+BA'nın "anlamsız döngü" ürettiği (25 Eylül'de bulunan) sorunun aslında GT
+ile neredeyse piksel-piksel örtüştüğü görüldü (`eski_vs_yeni_ba_sekil.png`
+öncesi bir yakın-plan grafiği).
+
+**Kullanıcı bu ikisini de sorguladı, ikisi de yanlış çıktı.** Isınma
+sırasında (`frame < 750`) kod pozisyonu doğrudan GT ile değiştiriyor
+(`position = gt.as_vector()`), yani o bölgedeki "mükemmel eşleşme" gerçek
+bir başarı değil, sadece GT'nin kopyalanması. Isınma dahil ortalama, bu
+"bedava sıfır hata" kareleriyle şişiyor.
+
+**Sadece otonom bölgeyi (frame >= 750) izole edince gerçek tablo ortaya
+çıktı:**
+```
+                              tum-ucus (yanlis)   otonom-sadece (dogru)
+Eski (force_2d=false)        62.66 m              93.68 m
+Yeni (force_2d=true)         31.25 m              48.59 m
+Iyilesme                     %50.1                %48.1
+```
+İyileşme yönü doğru çıktı (force_2d gerçek bir kazanç), ama büyüklük
+farklı — ve BA'nın "üretimi geçtiği" iddiası da otonom-sadece ölçümde
+başlangıçta tersine döndü (BA 54,10m, üretim 48,59m — BA daha kötüydü).
+
+### anchor_sigma yeniden değerlendirildi, sonra vazgeçildi
+
+Z düzeltmesinin 25 Eylül'deki `anchor_sigma` taramasını da etkilemiş
+olabileceği düşünülüp `1e-3` (eski gevşek değer) `force_2d` ile yeniden
+test edildi — otonom-sadece ölçümde BA gerçekten üretimi geçti (47,36m
+vs 48,59m, +%2,5). Ama **oturum_3'te aynı test** (gerçek kalibrasyonla,
+`force_2d` gerekmeden) tam tersini verdi: BA %41,6 daha kötü (69,71m vs
+49,23m). **`anchor_sigma`'nın "doğru" değeri uçuşa göre değişiyor, evrensel
+bir optimum yok.** Karar: `1e-6`'da kal — hiçbir uçuşta -%5'ten kötü
+çıkmıyor, `1e-3` ise +%48'den -%42'ye kadar savruluyor. Tüm config
+dosyaları `1e-6`'da tutarlı hale getirildi.
+
+### Yön (heading) sürüklenmesi — hâlâ ayrı, çözülmemiş bir sorun
+
+Kullanıcı, GT'nin gerçek bir döngü-içinde-döngü yaptığı bölgede, bizim
+(force_2d düzeltilmiş) BA sonucumuzun **çok daha yassı/uzamış** bir döngü
+çizdiğini fark etti (GT ~50m×52m yuvarlak, bizimki ~15m×60m uzamış) —
+dönüş sırasında gerçek açısal değişimi hafife aldığımızın görsel kanıtı.
+Bu, Z-sürüklenmesinden tamamen bağımsız, projenin en başından beri açık
+duran yön sürüklenmesi sorununun yeni, somut bir örneği.
+
+### Güncel durum özeti (28 Eylül sonu)
+
+- `force_2d: true` (2026 config'i) — kalıcı, pratik Z düzeltmesi
+- `anchor_sigma: 1e-6` — tüm config'lerde tutarlı, güvenli/genellenebilir
+- Loop closure — 6+ denemenin hiçbiri işe yaramadı, askıda
+- Açık sorular: Z-yanlılığının kök nedeni, yön sürüklenmesi, anchor_sigma
+  için evrensel/uyarlanabilir bir çözüm
+- **Kural: bundan sonra hep otonom-sadece (frame >= ısınma sınırı) hata
+  raporla, tüm-uçuş değil** — ısınma bedavası iki kez yanlış sonuca
+  götürdü bugün.
+
+## 29 Eylül — eski reddedilenleri Z'siz yeniden test, E-yolu disambiguation kapıları (bugünün en büyük kazancı), Sim(3) loop closure eksikliği
+
+**Öncelik 1 (eski reddedilen yöntemleri force_2d ile yeniden test):**
+
+- **Pencereli R-yumuşatma** (`windowcheck.py`, pencere=7): otonom-sadece
+  metrikle 2026'da -%12.6 ama oturum_3'te +%18.1 — genellenmiyor,
+  reddedildi. Ölçüm: oturum_3'ün otonom bölgesinde gerçek dönüş içeriği
+  2026'dan 2.5-6x fazla (`turnrate_compare.py`) — sebep bu.
+  `core/pose_graph.py`'ye `refine_with_rotation_smoothing()` olarak
+  eklendi ama production'da KULLANILMIYOR (kod duruyor, kapalı).
+- **Essential-matrix `retval<=0` kapısı**: kapı açık (mevcut) 2026'da
+  çok iyi (53.90 vs kapalıyken 87.71m), oturum_3'te kapalı daha iyi
+  (61.39 vs kapalıyken 47.76m) — ters yönlü flight-bağımlılık. En kötü
+  senaryo karşılaştırması (kapı açık -%28.5 vs kapı kapalı -%62.7) ile
+  **kapı açık (mevcut) korundu**.
+- **30°/90° dönüş-açısı filtresi**: tamamen etkisiz — hiçbir karede
+  (449 kare, iki uçuş) gerçek dönüş açısı 30°'yi bile geçmiyor, filtre
+  hiç tetiklenmiyor. Kapatıldı, gereksiz.
+
+**Öncelik 2 (BA parametreleri, force_2d + otonom-sadece ile yeniden doğrulama, E-kapısı ÖNCESİ):**
+`parallax_cos_threshold` (0.999), `pixel_noise_sigma` (1.5),
+`min_track_len_in_window` (8) — üçü de zaten en iyi/en iyiye yakın
+değerlerinde, değişiklik yok.
+
+**Mimari inceleme (fork, `core/*.py` + ORB-SLAM2 makalesi):** en güçlü
+bulgu — E-yolunda (`_decompose_essential`), H-yolundaki (`_decompose_homography`)
+cheirality+paralaks-istisnası+reprojeksiyon-hatası oylaması YOK,
+sadece `cv2.recoverPose`'un iç kontrolüne güveniliyor.
+
+**E-yolu disambiguation kapıları — BUGÜNÜN EN BÜYÜK KAZANCI, kalıcı entegre edildi:**
+H'nin 3 kapısı (cheirality + reprojeksiyon-hatası; paralaks-istisnası
+oy sonucunu etkilemediği için basitleştirildi) `decomposeEssentialMat`'ın
+4 adayına taşındı. İKİ uçuşta da AYNI YÖNDE, benzer büyüklükte iyileşme
+(ilk defa bugün flight-bağımlı bir çatışma yok):
+```
+                    E-YOLU KAPISIZ (eski)   E-YOLU KAPILI (yeni)
+2026 otonom:            53.90 m                 47.28 m   (-%12.3)
+oturum_3 otonom:         61.39 m                 53.29 m   (-%13.2)
+geçerli kare (2026):     444/449                 448/449   (daha az ret)
+geçerli kare (oturum_3): 441/449                 446/449   (daha az ret)
+```
+`core/motion_estimator.py`'de kalıcı (Windows + WSL kopyaları senkron).
+
+**Loop closure yeniden test (E-kapısı ile, 2026):** hâlâ BA'yı/production'ı
+geçemiyor (üretim 48.81m, BA 50.21m, BA+loop 51.16m, otonom-sadece) —
+ama BA'nın parametreleri E-kapısı ÖNCESİ veriyle taranmıştı, muhtemelen
+bayat; E-kapısı SONRASI yeniden tarama sürüyor (sonuç bu bölümde yok,
+ayrıca bak).
+
+**Sim(3) loop closure eksikliği (yeni bulgu, kod doğrulandı):**
+`_apply_loop_closure_pgo` sadece `BetweenFactorPose3` (rijit SE(3))
+kullanıyor, `Similarity3` hiç yok (`core/pose_graph.py:476`). ORB-SLAM2'nin
+monoküler loop closure'ının asıl katkısı (ölçek sürüklenmesini de
+düzeltmek) bizde yapısal olarak yok — loop closure'ın hiç işe
+yaramamasının kısmi açıklaması olabilir. `proje_durumu_28eylul.md`
+§4'e işlendi, Full BA'dan önce denenmesi önerilen ucuz bir ara adım.
+
+**Literatür kıyaslaması** (`okunacaklar.md`'ye eklendi): "Evaluation of
+Monocular SLAM Systems on High-Altitude Nadir UAV Footage" (arXiv,
+Ağustos 2026) — tam bizim senaryomuz (nadir, IMU'suz monoküler). SOTA
+derin-öğrenme sistemleri MASt3R-SLAM %0.53, DROID-SLAM ortalama %2.88
+yol-uzunluğu hatası veriyor; **dikey konum kalitesi zayıf** (bizim
+Z-sorunumuzla örtüşüyor, projeye özgü değil); loop closure'a rağmen
+geniş-alan trajektoriler çarpık kalıyor (bizim bulgumuzla örtüşüyor).
+2026 uçuşu (~727m) için DROID-SLAM seviyesi ~20.9m — 25m hedefinin
+gerçekçiliğini destekliyor.
+
 ## Dokümanlar
 
 `docs/` altında: `el_kitabi.docx` (kavramlar), `kod_notlari.md` (dosya bazlı
