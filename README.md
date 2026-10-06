@@ -17,6 +17,25 @@ Proje kapanmıştır. Kapanış raporu: [KAPANIS_RAPORU.md](KAPANIS_RAPORU.md). 
 pip install -r requirements.txt
 ```
 
+## Çalıştırma
+
+Pipeline bir yapılandırma dosyasıyla çalışır:
+
+```
+python main.py --config config_final_sp_eonly.yaml
+```
+
+Ek seçenekler: `--max-frames N` (ilk N kare), `--no-viz` (görselleştirmeyi atla), `--output-dir DIR` (çıktı klasörü). Veri yolları, kamera parametreleri ve değerlendirme ayarları yapılandırma dosyasında tanımlıdır. Veri bu repoda bulunmaz.
+
+## Testler
+
+```
+pip install numpy pyyaml opencv-python-headless pytest
+pytest -q
+```
+
+Testler sayısal çekirdeği (Sim(3) hizalaması, poz birikimi, LightGlue güvenlik kilidi) veri gerektirmeden doğrular. CI her itmede bu testleri çalıştırır.
+
 ## Değerlendirme
 
 Tüm sayılar tek bir kanonik betikle üretilir:

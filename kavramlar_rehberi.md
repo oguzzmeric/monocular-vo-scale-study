@@ -1,7 +1,7 @@
 # Kavramlar Rehberi — Sıfırdan Anlatım
 
 Bu dosya bir kayıt/referans DEĞİL — bu bir
-**öğretici**. Amaç: projede geçen (ve benim sürekli kullandığım) terimleri
+**öğretici** niteliğinde bir belgedir. Amaç: projede geçen terimleri
 sıfırdan, birbirine dayanarak, kavram karmaşası olmadan anlaman. Sırayla
 oku — her bölüm bir öncekine dayanıyor, atlama yapma.
 
@@ -300,7 +300,7 @@ reprojeksiyon oylaması) mantığına ihtiyaç duyuyor — bu KISIM AYNEN
 KALIYOR, sadece ona giren eşleşmeler daha temiz olacak. Matrisleri
 tamamen ortadan kaldırmak (kameranın hareketini de doğrudan bir sinir
 ağıyla tahmin etmek, DROID-SLAM/MASt3R gibi sistemlerin yaptığı) çok
-daha büyük, ~30GB VRAM isteyen ayrı bir mimari — biz o yola GİTMİYORUZ.
+daha büyük, ~30GB VRAM isteyen ayrı bir mimari — bu projede o yol izlenmedi.
 
 ---
 
@@ -323,7 +323,7 @@ daha büyük, ~30GB VRAM isteyen ayrı bir mimari — biz o yola GİTMİYORUZ.
 | Poz zincirleme / dead reckoning | Adım adım hareketleri toplayıp konum bulma                                |
 | Yön (heading) sürüklenmesi      | Küçük dönüş hatalarının zincirleme birikip büyük konum hatasına dönüşmesi |
 | Bundle Adjustment (BA)          | Birden fazla karenin pozunu+3B noktalarını birlikte optimize etme         |
-| GTSAM                           | BA'yı çözmek için kullandığımız kütüphane (faktör grafiği)                |
+| GTSAM                           | BA için kullanılan kütüphane (faktör grafiği)                |
 | SE(3)                           | Rijit dönüşüm (dönüş+öteleme, ölçek sabit)                                |
 | Sim(3)                          | Esnek dönüşüm (dönüş+öteleme+ölçek)                                       |
 | Loop closure                    | Daha önce görülen bir yere dönüşü tespit edip sürüklenmeyi düzeltme       |

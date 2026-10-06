@@ -5,8 +5,7 @@ Feature extraction ve semantic maskeleme modülü.
 ORB ile keypoint tespiti ve descriptor hesabı yapar.
 Dinamik objeler semantic mask ile engellenir.
 
-Phase 2'de bu modül SuperPoint ile swap edilir.
-Interface değişmez — odometry.py bu değişimden habersiz kalır.
+In phase 2 this module is swapped for SuperPoint. The interface stays the same.
 """
 
 import logging
@@ -89,7 +88,7 @@ class FeatureExtractor:
     Phase 2 swap notu:
         SuperPoint ile değiştirildiğinde bu sınıf kaldırılır,
         aynı extract() interface'ini sunan SuperPointExtractor yazılır.
-        odometry.py'da hiçbir değişiklik gerekmez.
+        Downstream modules need no changes.
     """
 
     def __init__(
