@@ -89,3 +89,13 @@ results/figures_gt_local/
 
 # Video ciktilari (buyuk binary, repoya girmez)
 results/video/
+
+# Yerel notlar ve paylasim taslaklari (repoda tutulmaz)
+archive/
+harita.md
+mimari.md
+problemler.md
+experiments/README.md
+results/yayin_metni.md
+results/yayin_gonderi.md
+paylaşım/
