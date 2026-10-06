@@ -13,4 +13,4 @@ Notlar: Şekil ATE, GT ile tüm yörünge üzerinden Sim(3) hizalanarak ölçül
 Alt yol RPE (%), KITTI tarzı: 100–800 m alt yollarda Sim(3) hizalı yörüngenin göreli ötelemesi hatası, yol uzunluğuna oranla.
 Konum RMSE, yalnızca warmup (kare < 450) hizalamasıyla ve üretim ölçeğiyle hesaplanır.
 2024'te GT z yoktur; metrikler XY düzleminde hesaplanır, diğer uçuşlarla mutlak karşılaştırma yapılmaz.
-Ölçek ayrı bir sorundur ve demo kapsamı dışındadır (harita.md §13.13).
+Ölçek ayrı bir sorundur ve demo kapsamı dışındadır.

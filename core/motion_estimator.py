@@ -111,7 +111,7 @@ class MotionEstimator:
         self._ransac_threshold = self._parse_ransac_threshold(feat_cfg)
         self._min_inlier_count = self._parse_min_inlier_count(hybrid_cfg)
         # 3 Ekim: sabit sinif sabiti (0.45) config'e tasindi -- SuperPoint
-        # taramasi (problemler.md SS2.14) bu esigin detector_type'a VE
+        # taramasi bu esigin detector_type'a VE
         # ucusa gore COK farkli optimum degerler istedigini gosterdi
         # (2024: 0.20, 2026/oturum_3: >=0.30). Varsayilan 0.45, eski
         # (ORB) davranisi degistirmiyor.

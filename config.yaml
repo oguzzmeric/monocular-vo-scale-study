@@ -30,7 +30,7 @@ features:
   # yapisal olarak engeller.
   spatial_distribution: false
   spatial_distribution_oversample: 3
-  # 3 Ekim: DL front-end swap (problemler.md SS2.12). detector_type: 'orb'
+  # 3 Ekim: DL front-end swap. detector_type: 'orb'
   # (varsayilan, degismedi) ya da 'superpoint'. descriptor_norm, matcher.py'nin
   # hangi mesafe metrigini kullanacagini belirler -- ORB (ikili) icin 'hamming',
   # SuperPoint (ondalikli) icin 'l2' olmali. device: 'auto' (varsa CUDA, yoksa CPU).
@@ -38,7 +38,7 @@ features:
   descriptor_norm: hamming
   device: auto
   # 3 Ekim: eskiden motion_estimator.py'de sabit (0.45) kod-ici sabitti,
-  # artik config'ten okunuyor -- SuperPoint taramasi (problemler.md SS2.14)
+  # artik config'ten okunuyor -- SuperPoint taramasi
   # bu esigin detector_type'a gore cok farkli optimum istedigini gosterdi.
   # Bu deger (0.45) SADECE ORB icin gecerli, degistirilmedi.
   homography_score_ratio_threshold: 0.45

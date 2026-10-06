@@ -1,6 +1,6 @@
 # Kavramlar Rehberi — Sıfırdan Anlatım
 
-Bu dosya `problemler.md`/`mimari.md` gibi bir kayıt/referans DEĞİL — bu bir
+Bu dosya bir kayıt/referans DEĞİL — bu bir
 **öğretici**. Amaç: projede geçen (ve benim sürekli kullandığım) terimleri
 sıfırdan, birbirine dayanarak, kavram karmaşası olmadan anlaman. Sırayla
 oku — her bölüm bir öncekine dayanıyor, atlama yapma.

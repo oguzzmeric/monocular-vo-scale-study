@@ -9,7 +9,7 @@ Girdi : Adim kayitlari (pickle). Her kayit bir adim listesidir; her adim icin
         Varsayilan kayitlar data/ altindadir (bkz. RUNS).
 Cikti : results/canonical_table.md ve results/canonical_table.csv
 
-Metrikler (harita.md §12.2 ve §13.3 ile uyumlu):
+Metrikler:
     sekil        : tum yorunge GT'ye Sim(3) ile hizalanir (ideal olcum). Ana metrik.
     konum_rmse   : yalnizca warmup (kare < 450) Sim(3) ile hizalanan ham konum,
                    otonom karelerde (kare >= 450) 3D RMSE. Ikincil metrik.
@@ -184,7 +184,7 @@ def main():
         "Alt yol RPE (%), KITTI tarzı: 100–800 m alt yollarda Sim(3) hizalı yörüngenin göreli ötelemesi hatası, yol uzunluğuna oranla.",
         "Konum RMSE, yalnızca warmup (kare < 450) hizalamasıyla ve üretim ölçeğiyle hesaplanır.",
         "2024'te GT z yoktur; metrikler XY düzleminde hesaplanır, diğer uçuşlarla mutlak karşılaştırma yapılmaz.",
-        "Ölçek ayrı bir sorundur ve demo kapsamı dışındadır (harita.md §13.13).",
+        "Ölçek ayrı bir sorundur ve demo kapsamı dışındadır.",
     ]
     with open("results/canonical_table.md", "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")

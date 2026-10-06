@@ -41,7 +41,7 @@ class MatcherError(Exception):
 def validate_lightglue_conf(depth_confidence: float, width_confidence: float) -> None:
     """
     5 Ekim guvenlik kilidi: 2024 verisinde depth_confidence=0.99 ve width_confidence=-1
-    birlikte kullanildiginda pozlar felakete suruklendi (163-280 m, problemler.md 2.17).
+    birlikte kullanildiginda pozlar felakete suruklendi (163-280 m).
     Bu kombinasyon ve width_confidence<0 (genislik budamasi kapali) reddedilir.
 
     Raises:
