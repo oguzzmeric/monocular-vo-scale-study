@@ -1,111 +1,92 @@
-# Tek kameralı görsel odometri (GNSS kullanmadan): sensörsüz çalışma
+# Monocular Visual Odometry for GNSS-Denied Drones: A Scale Study
 
-Bu proje, tek bir kameradan bir drone'un yörüngesini tahmin etmeyi ve bu tahminin ne kadar doğru olabileceğini ölçmeyi amaçlar. Ölçek (metre cinsinden büyüklük) sensörsüz çözülemediği için ana ölçüt olarak yörüngenin GT şekline uyumu (şekil ATE) kullanılmıştır. Ölçekle ilgili bulgular ve sınırlar belgelenmiştir.
+Estimating a drone's trajectory from a single camera, without GPS, IMU or other sensors, and measuring how far that can go. The trajectory **shape** can be recovered well; **metric scale** could not be solved from a single camera alone, and this repo documents the experiments behind that conclusion.
 
-Proje kapanmıştır. Kapanış raporu: [KAPANIS_RAPORU.md](KAPANIS_RAPORU.md). Bu çalışmanın devamı, IMU'lu görsel-ataletsel odometri (VIO) olarak ayrı bir repoda yürütülmektedir.
+![Estimated trajectories, 2026 flight: ORB vs SuperPoint+LightGlue](results/figures_nogt/tahmin_2026.png)
 
-## Yöntem
+**Key result:** replacing ORB with **SuperPoint + LightGlue** reduced shape error (Sim(3)-aligned ATE) by **31–39%** across three flights, under the same tuning budget.
 
-1. **Özellik ve eşleştirme:** SuperPoint + LightGlue (karşılaştırma: ORB).
-2. **Poz tahmini:** Esansiyel matris (E-only; homografi yolu kapalı).
-3. **Birikim:** Birim öteleme ve rotasyonlar, yörünge oluşturacak şekilde birleştirilir.
-4. **Ölçek:** Metrik ölçek sensörsüz çözülemedi; ayrı bir sorun olarak raporlanır.
+The project is closed. Full write-up (Turkish): [KAPANIS_RAPORU.md](KAPANIS_RAPORU.md). The follow-up work, visual-inertial odometry with an IMU (where scale becomes observable), continues in a separate repository.
 
-## Kurulum
+## Method
 
-```
+1. **Features and matching:** SuperPoint + LightGlue (baseline: ORB + brute-force matching).
+2. **Pose estimation:** essential matrix (E-only; homography path disabled).
+3. **Accumulation:** unit-length translations and rotations are chained into a trajectory.
+4. **Scale:** metric scale could not be recovered without additional sensors; it is reported separately.
+
+## Results (selected settings)
+
+| flight | front end | shape ATE (m) | sub-path RPE (%) | position RMSE (m) |
+|---|---|---|---|---|
+| 2026 | ORB | 40.9 | 24.7 | 67.7 |
+| 2026 | SuperPoint+LG | **28.0** | **16.7** | 113.1 |
+| session_3 | ORB | 21.0 | 11.8 | 41.2 |
+| session_3 | SuperPoint+LG | **14.0** | **8.3** | 41.3 |
+| 2024 (XY only) | ORB | 72.1 | 19.4 | 153.2 |
+| 2024 (XY only) | SuperPoint+LG | **44.1** | **13.3** | 119.2 |
+
+Notes:
+- Both front ends were tuned with the same budget (6 configurations each), selected on the 2026 and session_3 flights only. The 2024 flight is a held-out check.
+- The 2024 data has no ground-truth altitude, so only XY metrics are reported and it is not compared in absolute terms with the other flights.
+- Position RMSE is large because of the unsolved scale; the shape metric is not affected by it.
+
+### Metrics
+
+- **Shape ATE (m):** the full trajectory is aligned to ground truth with Sim(3); remaining 3D RMS error. This is an idealized metric because the alignment uses ground truth.
+- **Sub-path RPE (%):** KITTI-style relative translation error over 100–800 m sub-paths.
+- **Position RMSE (m):** real position error at production scale, with alignment on the first 450 frames only.
+- **Heading error (°):** median difference between estimated and ground-truth velocity direction.
+
+## What was learned
+
+- Metric scale was not solved from a single camera. Tested and documented: parallax, ground-truth altitude, semantic (object-size) altitude, heading measurement, and bundle adjustment. None changed the conclusion.
+- Rotation error of about 0.5° per step accumulates and distorts the shape; most of the heading error comes from rotation.
+- Loop closure and full BA were not applied to the final pipeline, which limits the results.
+- Real-time performance was not measured; results were produced from recorded step outputs.
+- The 2026 production config uses ground-truth altitude, so absolute numbers may be optimistic. The two front ends were compared under the same conditions, so the relative result holds.
+
+## Setup
+
+```bash
 pip install -r requirements.txt
-```
-
-## Çalıştırma
-
-Pipeline bir yapılandırma dosyasıyla çalışır:
-
-```
 python main.py --config config_final_sp_eonly.yaml
 ```
 
-Ek seçenekler: `--max-frames N` (ilk N kare), `--no-viz` (görselleştirmeyi atla), `--output-dir DIR` (çıktı klasörü). Veri yolları, kamera parametreleri ve değerlendirme ayarları yapılandırma dosyasında tanımlıdır. Veri bu repoda bulunmaz.
+Options: `--max-frames N`, `--no-viz`, `--output-dir DIR`. Data paths, camera parameters and evaluation settings are defined in the config file. Data is not included in this repo.
 
-## Testler
+## Tests
 
-```
+```bash
 pip install numpy pyyaml opencv-python-headless pytest
 pytest -q
 ```
 
-Testler sayısal çekirdeği (Sim(3) hizalaması, poz birikimi, LightGlue güvenlik kilidi) veri gerektirmeden doğrular. CI her itmede bu testleri çalıştırır.
+Tests check the numerical core (Sim(3) alignment, pose accumulation, LightGlue safety lock) without any data. CI runs them on every push.
 
-## Değerlendirme
+## Evaluation
 
-Tüm sayılar tek bir kanonik betikle üretilir:
+All reported numbers come from one canonical script:
 
-```
+```bash
 python experiments/evaluate_canonical.py
 ```
 
-Çıktılar `results/canonical_table.md` ve `results/canonical_table.csv` dosyalarına yazılır. Veri yolları betik içinde sabit olarak tanımlıdır. Betik, `data/` altındaki adım kayıtlarını (`grid_*.pkl`) ve GT dosyalarını bekler; bunlar bu repoda yoktur, kendi kopyanızla sağlamanız gerekir.
+It writes `results/canonical_table.md` and `results/canonical_table.csv`, and expects step logs (`grid_*.pkl`) and ground-truth files under `data/`, which are not in this repo.
 
-Ölçütler:
-- **Şekil ATE (m):** Tüm yörünge GT'ye Sim(3) ile hizalanır; kalan 3D RMS. İdeal bir ölçümdür (hizalama GT kullanır).
-- **Alt yol RPE (%):** KITTI tarzı, 100–800 m alt yollar üzerinde göreli ötelemeyi ölçer.
-- **Konum RMSE (m):** İlk 450 karenin GT ile hizalanmasıyla, üretim ölçeğinde ölçülen gerçek konum hatası.
-- **Yön hatası (°):** Hizalanmış yörüngenin hız yönü ile GT hız yönü farkı (medyan).
+## Repository layout
 
-## Sonuçlar (seçilen ayarlar)
+- `core/`: pipeline modules (features, matching, pose, scale, pose graph)
+- `utils/`: data loader, camera calibration
+- `experiments/`: canonical evaluation, figures, EuRoC comparison script (`euroc_pipeline.py`)
+- `results/`: result tables and figures without ground truth (`figures_nogt/`, `figures/`)
+- `config.yaml`: production config (ORB); `config_final_sp_eonly.yaml`: SuperPoint+LG, E-only
+- `main.py`: entry point
 
-| uçuş | ön uç | şekil ATE (m) | alt yol RPE (%) | konum RMSE (m) |
-|---|---|---|---|---|
-| 2026 | ORB | 40,9 | 24,7 | 67,7 |
-| 2026 | SuperPoint+LG | 28,0 | 16,7 | 113,1 |
-| oturum_3 | ORB | 21,0 | 11,8 | 41,2 |
-| oturum_3 | SuperPoint+LG | 14,0 | 8,3 | 41,3 |
-| 2024 (yalnızca XY) | ORB | 72,1 | 19,4 | 153,2 |
-| 2024 (yalnızca XY) | SuperPoint+LG | 44,1 | 13,3 | 119,2 |
+## Data note
 
-Notlar:
-- Ayarlar, her ön uç için aynı bütçeyle (6 kombinasyon) ve yalnızca 2026 ile oturum_3 üzerinde seçildi; 2024 bağımsız kontroldür.
-- 2024 verisinde GT yüksekliği yoktur; yalnızca XY metriği hesaplanır, diğer uçuşlarla mutlak karşılaştırma yapılmaz.
-- Konum RMSE, ölçek sorunu nedeniyle büyüktür; şekil ölçütü bu sorundan bağımsız değildir ama ondan etkilenmez.
+The flight data comes from the TEKNOFEST competition and is not redistributed. Figures with ground-truth overlays are not published until the data terms are clear. Early commits in the history may contain competition data files; they are not tracked in the current tree.
 
-## Görseller
+## License
 
-2026 uçuşunun tahmin yörüngesi (GT gösterilmeden; ORB ve SuperPoint+LG yan yana, ölçütler görselde):
-
-![2026 tahmin](results/figures_nogt/tahmin_2026.png)
-
-Diğer uçuşlar için: `results/figures_nogt/`. Yalnızca çubuk grafikler: `results/figures/`.
-
-Görsellerdeki yörüngeler GT'ye Sim(3) ile hizalanarak gösterilmiştir; GT çizgisi yoktur.
-
-Yarışma verisinden türetilen GT karşılaştırma görselleri bu repoda yer almaz; veri kullanım koşulları kesinleşene kadar yalnızca GT içermeyen figürler paylaşılır.
-
-## Bulgular ve sınırlar
-
-- Metrik ölçek, sensörsüz tek kameradan çözülemedi; paralaks, GT irtifası, semantik irtifa, yön ölçümü ve BA ile iyileştirme denendi, sonuç değiştirmedi.
-- Adım başına rotasyon hatası (~0,5°) yörüngede birikir ve şekli bozar. Yön hatasının büyük kısmı rotasyon kaynaklıdır.
-- Döngü kapanışı ve BA bu hatta uygulanmadı; sonuçlar bu nedenle sınırlıdır.
-- Gerçek zamanlılık ölçülmedi; sonuçlar kayıtlı adım çıktısıyla üretildi.
-- 2026 üretim yapılandırması GT irtifa bilgisini kullanır; mutlak sayılar bu nedenle iyimser olabilir. İki ön uç aynı koşulda karşılaştırıldığı için göreli sonuç geçerlidir.
-
-## Klasör yapısı
-
-- `core/`: pipeline modülleri (özellik, eşleştirme, poz, ölçek, poz grafiği).
-- `utils/`: veri yükleyici ve kamera kalibrasyonu.
-- `experiments/`: kanonik değerlendirme, figürler, EuRoC karşılaştırma betiği (`euroc_pipeline.py`).
-- `results/`: sonuç tabloları ve GT içermeyen figürler.
-- `config.yaml`: üretim (ORB) yapılandırması. `config_final_sp_eonly.yaml`: SuperPoint+LG, yalnızca E.
-- `main.py`: giriş noktası.
-- Deneysel betikler, test yapılandırmaları ve eski notlar bu repoda yer almaz; yerel olarak tutulur.
-
-## Yapılandırma
-
-Veri yolları, kamera parametreleri ve ayarlar `config*.yaml` dosyalarında tanımlanır. Veri ve GT bu repoda bulunmaz (`.gitignore` ile dışlanmıştır).
-
-## Veri ve geçmiş notu
-
-Bu repodaki commit geçmişinde, çalışmanın ilk aşamalarında eklenmiş yarışma veri dosyaları (ground truth ve tespit verisi) bulunabilir. Bu veriler yeniden dağıtılmaz; geçmiş olduğu gibi bırakılmıştır. Güncel ağaçta bu dosyalar izlenmez. Veri kullanım koşulları veri sahibi organizatörler tarafından belirlenir; bu repodan veri indirmek için kendi erişiminizi kullanmanız gerekir.
-
-## Lisans
-
-Kod, [MIT lisansı](LICENSE) altında yayımlanmıştır. Kullanılan veri setleri kendi lisanslarına tabidir.
+Code is released under the [MIT license](LICENSE). Datasets are subject to their own licenses.
